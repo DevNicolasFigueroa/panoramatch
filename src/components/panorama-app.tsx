@@ -14,15 +14,14 @@ export default function PanoramaApp() {
   const { isHydrated, activePanorama, savedPanoramas, actions } = usePanoramaStore();
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-4 px-4 pt-6 pb-10 sm:max-w-lg">
-      {/* Marca compacta, común a las dos vistas */}
-      <header className="flex items-center justify-center gap-2 select-none">
-        <span className="text-lg" aria-hidden>
-          🗓️
-        </span>
-        <h1 className="bg-gradient-to-r from-emerald-300 via-teal-200 to-cyan-300 bg-clip-text text-lg font-bold tracking-tight text-transparent">
-          PanoraMatch
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-5 px-4 pt-7 pb-12 sm:max-w-lg">
+      {/* Marca: wordmark tinta/cancha, sin adornos */}
+      <header className="flex items-center justify-center select-none">
+        <h1 className="font-display text-xl font-bold tracking-tight">
+          <span className="text-ink">Panora</span>
+          <span className="text-cancha">Match</span>
         </h1>
+        <span className="ml-2 h-1.5 w-1.5 rounded-full bg-cancha" aria-hidden />
       </header>
 
       {!isHydrated ? (
@@ -49,8 +48,8 @@ export default function PanoramaApp() {
 /** Pantalla breve mientras localStorage se lee en el navegador. */
 function SplashScreen() {
   return (
-    <div className="mt-16 grid place-items-center gap-3 text-slate-400" aria-busy="true">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-emerald-400" />
+    <div className="mt-20 grid place-items-center gap-3 text-ink-soft" aria-busy="true">
+      <div className="h-7 w-7 animate-spin rounded-full border-2 border-ink/15 border-t-cancha" />
       <p className="text-sm">Cargando tus panoramas…</p>
     </div>
   );

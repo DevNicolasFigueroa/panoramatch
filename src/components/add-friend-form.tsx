@@ -2,7 +2,7 @@
 
 /**
  * Módulo de Confirmación Rápida: escribir el nombre de un amigo y marcar
- * su respuesta en un toque. Enter parte en "En duda" (regla del producto).
+ * su respuesta en un toque. Enter lo deja en "En duda" (regla del producto).
  */
 
 import { useState } from "react";
@@ -21,12 +21,12 @@ export default function AddFriendForm({
   const addWith = (status: AttendanceStatus) => {
     const trimmed = name.trim();
     if (trimmed === "") {
-      setError("Escribe el nombre de tu amigo primero.");
+      setError("Primero escribe el nombre de tu amigo.");
       return;
     }
     const accepted = onAddFriend(trimmed, status);
     if (!accepted) {
-      setError("Ese nombre ya está en la lista.");
+      setError("Ese nombre ya está anotado.");
       return;
     }
     setError(null);
@@ -34,12 +34,12 @@ export default function AddFriendForm({
   };
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-black/30">
-      <h2 className="text-sm font-bold tracking-wide text-slate-200 uppercase">
-        Confirmación rápida
+    <section className="rounded-2xl border border-ink/15 bg-elev p-4">
+      <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+        Anota a un amigo
       </h2>
-      <p className="mt-1 text-xs text-slate-400">
-        Escribe el nombre y la marca. Enter lo deja «En duda».
+      <p className="mt-0.5 text-sm text-ink-soft">
+        Escribe el nombre y su respuesta; Enter lo deja en duda.
       </p>
 
       <form
@@ -57,10 +57,10 @@ export default function AddFriendForm({
             setName(e.target.value);
             setError(null);
           }}
-          placeholder="Ej: Matías"
+          placeholder="Nombre"
           maxLength={40}
           autoFocus
-          className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-base text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+          className="w-full rounded-xl border border-ink/20 bg-paper px-3.5 py-2.5 text-base text-ink outline-none transition focus:border-cancha"
         />
         <div className="grid grid-cols-3 gap-2">
           {STATUS_OPTIONS.map((option) => (
@@ -77,7 +77,7 @@ export default function AddFriendForm({
       </form>
 
       {error !== null && (
-        <p className="mt-2 text-xs font-medium text-rose-400" role="alert">
+        <p className="mt-2 text-xs font-semibold text-baja" role="alert">
           {error}
         </p>
       )}

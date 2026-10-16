@@ -1,10 +1,9 @@
 "use client";
 
 /**
- * Calculadora Financiera en CLP en tiempo real (regla chilena):
- * sin decimales — cada confirmado paga un múltiplo de $100 hacia arriba
- * y la diferencia es un pozo común explícito. Los cálculos vienen de
- * `core/currency-clp.ts`.
+ * La boleta: calculadora financiera en CLP presentada como boleta troquelada
+ * (titular grande + filas por partida). Cálculo puro de `core/currency-clp.ts`;
+ * la interfaz solo formatea.
  */
 
 import { formatCLP, type CostSplit } from "@/core/currency-clp";
@@ -15,80 +14,76 @@ export default function FinancialPanel({
   split: CostSplit;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-black/30">
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-sm font-bold tracking-wide text-slate-200 uppercase">
-          La cuenta (CLP)
+    <aside className="relative rounded-2xl border border-ink bg-elev px-5 py-5 shadow-[3px_3px_0_0_rgba(38,48,58,0.9)]">
+      <div className="flex items-baseline justify-between gap-3 pb-3">
+        <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+          La boleta
         </h2>
-        {split.canSplit && (
-          <span className="text-xs text-slate-400">
-            entre {split.confirmedCount} {split.confirmedCount === 1 ? "persona" : "personas"}
-          </span>
-        )}
+        <span className="text-sm text-ink-soft">
+          {split.canSplit
+            ? `${split.confirmedCount} ${split.confirmedCount === 1 ? "persona" : "personas"}`
+            : "sin confirmados"}
+        </span>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2.5">
-        <Metric label="Costo total" value={formatCLP(split.totalCostCLP)} />
-        <Metric
-          label="Cada uno paga"
-          value={split.canSplit ? formatCLP(split.perHeadCLP) : "—"}
-          highlight
-        />
-      </div>
-
-      {!split.canSplit ? (
-        <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          La cuenta se divide en cuanto haya confirmados «Voy».
+      {/* Titular: el monto que importa */}
+      <div className="pb-2">
+        <p className="text-sm text-ink-soft">Cada uno paga</p>
+        <p className="font-display text-4xl font-extrabold leading-tight tracking-tight text-cancha tabular-nums">
+          {split.canSplit ? formatCLP(split.perHeadCLP) : "$——"}
         </p>
-      ) : (
-        <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-400">
-              {split.isExactDivision
-                ? "División exacta ✅"
-                : "Pozo a favor (diferencia por redondeo)"}
-            </span>
-            <span className={`font-bold ${split.surplusCLP > 0 ? "text-teal-300" : "text-slate-300"}`}>
-              {formatCLP(split.surplusCLP)}
-            </span>
-          </div>
-          {!split.isExactDivision && (
-            <p className="mt-1 text-[11px] leading-snug text-slate-500">
-              Redondeo práctico: se sube al múltiplo de $100 más cercano. El sobrante queda
-              para el pozo común de los amigos.
+      </div>
+
+      <div className="relative">
+        {/* Troquelado: picos al nivel de la línea, como boleta de cancha */}
+        <span aria-hidden className="absolute top-[-9px] left-[-29px] h-[18px] w-[18px] rounded-full border border-ink bg-paper" />
+        <span aria-hidden className="absolute top-[-9px] right-[-29px] h-[18px] w-[18px] rounded-full border border-ink bg-paper" />
+        <div className="flex flex-col gap-2 border-t-2 border-dashed border-ink/50 pt-3 text-sm">
+          <Row label="Costo total" value={formatCLP(split.totalCostCLP)} />
+
+          {!split.canSplit ? (
+            <p className="rounded-lg bg-wait-soft px-3 py-2 text-xs text-wait">
+              La cuenta se divide recién cuando alguien confirme «Voy».
             </p>
+          ) : (
+            <Row
+              label={
+                split.isExactDivision
+                  ? "División exacta"
+                  : "Pozo a favor, por el redondeo"
+              }
+              value={formatCLP(split.surplusCLP)}
+              valueClass={split.surplusCLP > 0 ? "text-wait" : undefined}
+            />
           )}
         </div>
+      </div>
+
+      {split.canSplit && !split.isExactDivision && (
+        <p className="border-t border-dashed border-ink/40 pt-2 text-xs leading-snug text-ink-soft">
+          Redondeo práctico chileno: se sube al múltiplo de $100 más cercano y el
+          sobrante queda para el pozo común. Cero decimales, siempre.
+        </p>
       )}
-    </section>
+    </aside>
   );
 }
 
-function Metric({
+function Row({
   label,
   value,
-  highlight = false,
+  valueClass,
 }: {
   label: string;
   value: string;
-  highlight?: boolean;
+  valueClass?: string;
 }) {
   return (
-    <div
-      className={`rounded-xl border px-3 py-2.5 ${
-        highlight
-          ? "border-emerald-500/40 bg-emerald-500/10"
-          : "border-slate-700/60 bg-slate-950/60"
-      }`}
-    >
-      <p className="text-[11px] font-medium tracking-wide text-slate-400 uppercase">{label}</p>
-      <p
-        className={`mt-0.5 text-lg font-extrabold tabular-nums ${
-          highlight ? "text-emerald-300" : "text-slate-100"
-        }`}
-      >
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-ink-soft">{label}</span>
+      <span className={`font-semibold tabular-nums ${valueClass ?? "text-ink"}`}>
         {value}
-      </p>
+      </span>
     </div>
   );
 }

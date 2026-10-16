@@ -1,5 +1,6 @@
 /**
  * Estilos compartidos de la UI (presentación solamente, cero lógica de negocio).
+ * Sistema "Cuentas claras en la cancha": papel, tinta y kits de color por modo.
  */
 
 import type { AttendanceStatus, PanoramaMode, QuorumStatus } from "@/core/types";
@@ -14,52 +15,58 @@ export const STATUS_OPTIONS: ReadonlyArray<{
   {
     status: "going",
     label: "Voy",
-    activeClass: "bg-emerald-500 text-white border-emerald-400 shadow-emerald-500/25",
-    inactiveClass: "border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10",
+    activeClass: "bg-cancha text-elev border-cancha",
+    inactiveClass: "border-cancha/30 text-cancha hover:bg-cancha-soft",
   },
   {
     status: "maybe",
     label: "En duda",
-    activeClass: "bg-amber-400 text-amber-950 border-amber-300 shadow-amber-400/25",
-    inactiveClass: "border-amber-500/30 text-amber-300 hover:bg-amber-500/10",
+    activeClass: "bg-wait text-elev border-wait",
+    inactiveClass: "border-wait/30 text-wait hover:bg-wait-soft",
   },
   {
     status: "not_going",
     label: "No puedo",
-    activeClass: "bg-rose-500 text-white border-rose-400 shadow-rose-500/25",
-    inactiveClass: "border-rose-500/30 text-rose-300 hover:bg-rose-500/10",
+    activeClass: "bg-baja text-elev border-baja",
+    inactiveClass: "border-baja/30 text-baja hover:bg-baja-soft",
   },
 ] as const;
 
-/** Etiqueta y colores de cada modo de panorama. */
-export const MODE_STYLES: Record<PanoramaMode, { label: string; badgeClass: string; accentText: string }> = {
+/** Kit visual por modo de panorama (chip + barra lateral de tarjeta). */
+export const MODE_STYLES: Record<
+  PanoramaMode,
+  { label: string; chipClass: string; barClass: string; accentText: string }
+> = {
   social: {
     label: "Social (Salida/Bar)",
-    badgeClass: "border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-300",
-    accentText: "text-fuchsia-300",
+    chipClass: "border-social/30 bg-social-soft text-social",
+    barClass: "bg-social",
+    accentText: "text-social",
   },
   colaborativo: {
     label: "Colaborativo (Asado/Junta)",
-    badgeClass: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-    accentText: "text-amber-300",
+    chipClass: "border-ember/30 bg-ember-soft text-ember",
+    barClass: "bg-ember",
+    accentText: "text-ember",
   },
   deportivo: {
     label: "Deportivo (Fútbol/Partido)",
-    badgeClass: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
-    accentText: "text-emerald-300",
+    chipClass: "border-deporte/30 bg-deporte-soft text-deporte",
+    barClass: "bg-deporte",
+    accentText: "text-deporte",
   },
 };
 
-/** Emoji del modo, compartido por cabecera y tarjetas. */
+/** Emoji del modo: dato semántico del chip, no decoración. */
 export const MODE_EMOJI: Record<PanoramaMode, string> = {
   social: "🎉",
   colaborativo: "🍢",
   deportivo: "⚽",
 };
 
-/** Colores del punto de estado del semáforo, para badges compactos en tarjetas. */
+/** Colores del punto de estado del semáforo (punto + texto a contraste). */
 export const QUORUM_STYLES: Record<QuorumStatus, { dotClass: string; textClass: string }> = {
-  pending: { dotClass: "bg-amber-400", textClass: "text-amber-300" },
-  partial: { dotClass: "bg-sky-400", textClass: "text-sky-300" },
-  ready: { dotClass: "bg-emerald-400", textClass: "text-emerald-300" },
+  pending: { dotClass: "bg-wait", textClass: "text-wait" },
+  partial: { dotClass: "bg-camino", textClass: "text-camino" },
+  ready: { dotClass: "bg-cancha", textClass: "text-cancha" },
 };

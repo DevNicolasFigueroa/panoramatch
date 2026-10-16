@@ -12,6 +12,7 @@ import type { CreateEventInput, PanoramaMode } from "@/core/types";
 import { PANORAMA_MODES } from "@/core/types";
 import { getTodayLocalValue, isValidLocalDatetime } from "@/core/datetime-cl";
 import { formatCLP, isValidCLPAmount } from "@/core/currency-clp";
+import { MODE_EMOJI } from "@/components/ui-theme";
 
 /** Errores por campo, presentados en español para el usuario. */
 interface FormErrors {
@@ -62,43 +63,36 @@ export default function PanoramaForm({
     }
   };
 
-  const modeBadge = (modeId: PanoramaMode) =>
-    modeId === "social"
-      ? "border-fuchsia-500/40 bg-fuchsia-500/10"
-      : modeId === "colaborativo"
-        ? "border-amber-500/40 bg-amber-500/10"
-        : "border-emerald-500/40 bg-emerald-500/10";
-
   return (
     <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl shadow-black/30">
-        <h2 className="text-xl font-bold text-slate-100">Crear panorama</h2>
-        <p className="mt-1 text-sm text-slate-400">
-          Arma el plan, confirma asistencia y divide la cuenta en pesos chilenos.
+      <section className="rounded-2xl border border-ink/15 bg-elev px-5 py-5">
+        <h2 className="font-display text-2xl font-bold tracking-tight text-ink">
+          Nuevo panorama
+        </h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          Crea el plan, confirma la asistencia y divide la cuenta en pesos chilenos.
         </p>
 
         {/* Título */}
         <div className="mt-5 flex flex-col gap-1.5">
-          <label htmlFor="title" className="text-xs font-semibold tracking-wide text-slate-300 uppercase">
-            Título del panorama *
+          <label htmlFor="title" className="text-sm font-semibold text-ink">
+            Título
           </label>
           <input
             id="title"
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ej: Fútbol de jueves, asado en lo de Matías…"
+            placeholder="Fútbol de jueves, asado en lo de Matías…"
             maxLength={80}
-            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-base text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+            className="w-full rounded-xl border border-ink/20 bg-paper px-3.5 py-2.5 text-base text-ink outline-none transition focus:border-cancha"
           />
           {errors.title !== undefined && <FieldError message={errors.title} />}
         </div>
 
         {/* Modo */}
         <div className="mt-4 flex flex-col gap-1.5">
-          <span className="text-xs font-semibold tracking-wide text-slate-300 uppercase">
-            Modo / Plantilla *
-          </span>
+          <span className="text-sm font-semibold text-ink">Modo</span>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {PANORAMA_MODES.map((modeInfo) => {
               const selected = mode === modeInfo.id;
@@ -110,18 +104,14 @@ export default function PanoramaForm({
                   aria-pressed={selected}
                   className={`rounded-xl border p-3 text-left transition ${
                     selected
-                      ? `${modeBadge(modeInfo.id)} ring-2 ring-white/10`
-                      : "border-slate-700 bg-slate-950 hover:bg-slate-800"
+                      ? "border-ink/60 bg-paper ring-2 ring-cancha"
+                      : "border-ink/15 bg-paper hover:border-ink/35"
                   }`}
                 >
-                  <span
-                    className={`block text-sm font-semibold ${
-                      selected ? "text-slate-100" : "text-slate-300"
-                    }`}
-                  >
-                    {modeInfo.label}
+                  <span className="block text-sm font-semibold text-ink">
+                    {MODE_EMOJI[modeInfo.id]} {modeInfo.label}
                   </span>
-                  <span className="mt-0.5 block text-xs text-slate-400">
+                  <span className="mt-0.5 block text-xs text-ink-soft">
                     {modeInfo.description}
                   </span>
                 </button>
@@ -133,7 +123,7 @@ export default function PanoramaForm({
 
         {/* Fecha y hora */}
         <div className="mt-4 flex flex-col gap-1.5">
-          <label htmlFor="startsAt" className="text-xs font-semibold tracking-wide text-slate-300 uppercase">
+          <label htmlFor="startsAt" className="text-sm font-semibold text-ink">
             Fecha y hora
           </label>
           <input
@@ -141,16 +131,16 @@ export default function PanoramaForm({
             type="datetime-local"
             value={startsAt}
             onChange={(e) => setStartsAt(e.target.value)}
-            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-base text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+            className="w-full rounded-xl border border-ink/20 bg-paper px-3.5 py-2.5 text-base text-ink outline-none transition focus:border-cancha"
           />
-          <span className="text-xs text-slate-500">Hora local de Chile. Por defecto hoy.</span>
+          <span className="text-xs text-ink-soft">Hora local, los cambios nunca viajan a UTC.</span>
           {errors.startsAt !== undefined && <FieldError message={errors.startsAt} />}
         </div>
 
         {/* Cupo + costo */}
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="maxCapacity" className="text-xs font-semibold tracking-wide text-slate-300 uppercase">
+            <label htmlFor="maxCapacity" className="text-sm font-semibold text-ink">
               Cupo máximo
             </label>
             <input
@@ -161,20 +151,20 @@ export default function PanoramaForm({
               value={capacityText}
               onChange={(e) => setCapacityText(e.target.value)}
               placeholder="Sin límite"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-base text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+              className="w-full rounded-xl border border-ink/20 bg-paper px-3.5 py-2.5 text-base text-ink outline-none transition focus:border-cancha"
             />
-            <span className="text-xs text-slate-500">
-              {mode === "deportivo" ? "Obligatorio en deportivo (10, 12…)" : "Opcional"}
+            <span className="text-xs text-ink-soft">
+              {mode === "deportivo" ? "Obligatorio en deportivo" : "Opcional"}
             </span>
             {errors.maxCapacity !== undefined && <FieldError message={errors.maxCapacity} />}
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="totalCost" className="text-xs font-semibold tracking-wide text-slate-300 uppercase">
-              Costo total (CLP) *
+            <label htmlFor="totalCost" className="text-sm font-semibold text-ink">
+              Costo total (CLP)
             </label>
             <div className="relative">
-              <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm text-slate-500">
+              <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-base text-ink-soft">
                 $
               </span>
               <input
@@ -186,12 +176,10 @@ export default function PanoramaForm({
                 value={costText}
                 onChange={(e) => setCostText(e.target.value)}
                 placeholder="35000"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pr-3 pl-7 text-base text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                className="w-full rounded-xl border border-ink/20 bg-paper py-2.5 pr-3 pl-7 text-base text-ink outline-none transition focus:border-cancha"
               />
             </div>
-            <span className="text-xs text-slate-500">
-              {getFriendlyCostHint(costText)}
-            </span>
+            <span className="text-xs text-ink-soft">{getFriendlyCostHint(costText)}</span>
             {errors.totalCostCLP !== undefined && <FieldError message={errors.totalCostCLP} />}
           </div>
         </div>
@@ -199,9 +187,9 @@ export default function PanoramaForm({
         {/* Acción */}
         <button
           type="submit"
-          className="mt-6 w-full rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 px-4 py-3 text-base font-bold text-emerald-950 transition hover:brightness-110 active:scale-[0.99]"
+          className="mt-6 w-full rounded-xl bg-cancha px-4 py-3 font-display text-base font-bold text-elev transition hover:bg-cancha-deep active:scale-[0.99]"
         >
-          Crear panorama 🚀
+          Crear panorama
         </button>
       </section>
     </form>
@@ -245,7 +233,7 @@ function validate(
 
   const costTrimmed = costText.trim();
   if (costTrimmed === "" || !isValidCLPAmount(Number(costTrimmed))) {
-    errors.totalCostCLP = "Ingresa un costo entero en CLP (sin centavos, 0 o más).";
+    errors.totalCostCLP = "Ingresa un costo entero en CLP (sin centavos, cero o más).";
   }
 
   return Object.keys(errors).length === 0 ? null : errors;
@@ -255,16 +243,16 @@ function validate(
 function getFriendlyCostHint(costText: string): string {
   const trimmed = costText.trim();
   if (trimmed === "") {
-    return "Presupuesto base, arriendo de cancha…";
+    return "Arriendo de cancha, presupuesto del asado…";
   }
   const value = Number(trimmed);
-  return isValidCLPAmount(value) ? `Se dividirá como ${formatCLP(value)}` : "Debe ser un entero (sin centavos)";
+  return isValidCLPAmount(value) ? `Se dividirá como ${formatCLP(value)}` : "Debe ser un entero, sin decimales";
 }
 
 /** Mensaje de error compacto bajo el campo correspondiente. */
 function FieldError({ message }: { message: string }) {
   return (
-    <span className="text-xs font-medium text-rose-400" role="alert">
+    <span className="text-xs font-semibold text-baja" role="alert">
       {message}
     </span>
   );

@@ -23,21 +23,21 @@ export default function SavedPanoramasList({
   const ordered = sortSavedPanoramas(savedPanoramas);
 
   return (
-    <section className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-black/30">
-      <h2 className="text-sm font-bold tracking-wide text-slate-200 uppercase">
-        Mis panoramas guardados
+    <section className="flex flex-col gap-3">
+      <h2 className="px-1 font-display text-lg font-bold tracking-tight text-ink">
+        Mis panoramas
       </h2>
 
       {ordered.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-slate-700 bg-slate-950/60 px-4 py-5 text-center text-sm text-slate-400">
+        <p className="rounded-2xl border border-dashed border-ink/25 bg-elev px-4 py-6 text-center text-sm text-ink-soft">
           Crea tu primer panorama 🎉
         </p>
       ) : (
         <ul className="flex flex-col gap-2.5">
-          {ordered.map((saved) => (
+          {ordered.map((savedPanorama) => (
             <SavedPanoramaCard
-              key={saved.id}
-              saved={saved}
+              key={savedPanorama.id}
+              savedPanorama={savedPanorama}
               onOpenPanorama={onOpenPanorama}
               onRemovePanorama={onRemovePanorama}
             />
@@ -49,53 +49,60 @@ export default function SavedPanoramasList({
 }
 
 function SavedPanoramaCard({
-  saved,
+  savedPanorama,
   onOpenPanorama,
   onRemovePanorama,
 }: {
-  saved: SavedPanorama;
+  savedPanorama: SavedPanorama;
   onOpenPanorama: (panoramaId: string) => void;
   onRemovePanorama: (panoramaId: string) => void;
 }) {
-  const summary = buildSavedSummary(saved);
+  const summary = buildSavedSummary(savedPanorama);
   const quorumStyle = QUORUM_STYLES[summary.quorum];
   const modeStyle = MODE_STYLES[summary.mode];
 
   const handleRemove = () => {
     // Confirmación mínima: borrar con sus confirmaciones es irreversible (V1 local).
     if (window.confirm(`¿Eliminar "${summary.title}" con todas sus confirmaciones?`)) {
-      onRemovePanorama(saved.id);
+      onRemovePanorama(savedPanorama.id);
     }
   };
 
   return (
-    <li className="flex items-stretch gap-2">
+    <li
+      className="relative flex items-stretch gap-2 overflow-hidden rounded-xl border border-ink/15 bg-elev"
+    >
+      {/* Franja lateral con el color del modo: es información, no adorno */}
+      <span
+        aria-hidden
+        className={`absolute inset-y-0 left-0 w-[3px] ${modeStyle.barClass}`}
+      />
       {/* Zona clicable: abre el panel activo */}
       <button
         type="button"
         onClick={() => onOpenPanorama(summary.id)}
-        className="min-w-0 flex-1 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left transition hover:border-slate-600 hover:bg-slate-900 active:scale-[0.99]"
+        className="min-w-0 flex-1 rounded-xl py-3 pr-3 pl-4 text-left transition hover:bg-paper active:scale-[0.99]"
       >
         <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-sm font-bold text-slate-100">{summary.title}</span>
-          <span className="shrink-0 text-sm font-extrabold tabular-nums text-teal-300">
+          <span className="truncate text-sm font-bold text-ink">{summary.title}</span>
+          <span className="shrink-0 font-display text-base font-extrabold tabular-nums text-cancha">
             {formatCLP(summary.totalCostCLP)}
           </span>
         </div>
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-400">
-          <span className={`rounded-full border px-1.5 py-px text-[10px] font-bold tracking-wide uppercase ${modeStyle.badgeClass}`}>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft">
+          <span className={`rounded-full border px-1.5 py-px font-semibold ${modeStyle.chipClass}`}>
             {MODE_EMOJI[summary.mode]} {modeStyle.label}
           </span>
-          <span className="truncate">📅 {summary.formattedDate}</span>
+          <span>{summary.formattedDate}</span>
         </div>
 
         <div className="mt-1.5 flex items-center gap-2 text-xs">
           <span className={`h-2 w-2 shrink-0 rounded-full ${quorumStyle.dotClass}`} aria-hidden />
           <span className={`font-semibold ${quorumStyle.textClass}`}>{summary.quorumLabel}</span>
-          <span className="text-slate-500">
-            · {summary.titularCount}
-            {summary.maxCapacity !== null ? ` / ${summary.maxCapacity}` : ""} titulares
+          <span className="text-ink-soft">
+            {summary.titularCount}
+            {summary.maxCapacity !== null ? ` / ${summary.maxCapacity}` : ""} van
           </span>
         </div>
       </button>
@@ -105,9 +112,9 @@ function SavedPanoramaCard({
         type="button"
         onClick={handleRemove}
         aria-label={`Eliminar ${summary.title}`}
-        className="shrink-0 rounded-xl border border-rose-500/30 bg-slate-950/60 px-3 text-base text-rose-300 transition hover:border-rose-400/60 hover:bg-rose-500/10 active:scale-[0.97]"
+        className="shrink-0 border-l border-ink/10 px-3 text-base transition hover:bg-baja-soft active:scale-[0.97]"
       >
-        🗑️
+        <span aria-hidden className="text-ink-soft transition hover:text-baja">✕</span>
       </button>
     </li>
   );

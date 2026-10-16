@@ -7,8 +7,7 @@
  * resuelve `core/quota-manager.ts`; aquí solo se clasifica y se pinta.
  */
 
-import type { Attendee } from "@/core/types";
-import type { AttendeeClassification } from "@/core/types";
+import type { Attendee, AttendeeClassification } from "@/core/types";
 import { STATUS_OPTIONS } from "@/components/ui-theme";
 
 interface AttendeeSectionsProps {
@@ -23,27 +22,32 @@ export default function AttendeeSections({
   onChangeStatus,
 }: AttendeeSectionsProps) {
   return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl shadow-black/30">
+    <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-sm font-bold tracking-wide text-slate-200 uppercase">
-          Asistentes
+        <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+          La lista
         </h2>
-        <span className="text-xs text-slate-400">
+        <span className="text-xs text-ink-soft">
           {classification.titulars.length}
-          {maxCapacity !== null ? ` / ${maxCapacity} cupo` : " confirmados"} ·{" "}
-          {classification.waitlist.length} suplentes
+          {maxCapacity !== null ? ` de ${maxCapacity}` : ""} van ·{" "}
+          {classification.waitlist.length} en espera
         </span>
       </div>
 
       {/* Titulares confirmados */}
-      <Group title="Voy" subtitle="Titulares" countLabel={maxCapacity !== null ? `cupo ${classification.titulars.length}/${maxCapacity}` : undefined}>
+      <Group title="Van" situation="dentro del cupo" textClass="text-cancha">
         {classification.titulars.length === 0 ? (
-          <p className="text-sm text-slate-500 italic">
-            Aún sin confirmaciones. Suma a los primeros voluntarios 👆
+          <p className="text-sm text-ink-soft italic">
+            Nadie ha confirmado todavía. Anota a los primeros voluntarios arriba.
           </p>
         ) : (
           classification.titulars.map((attendee) => (
-            <AttendeeRow key={attendee.id} attendee={attendee} badge={{ label: "Titular", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" }} onChangeStatus={onChangeStatus} />
+            <AttendeeRow
+              key={attendee.id}
+              attendee={attendee}
+              badge={{ label: "Titular", className: "border-cancha/40 bg-cancha-soft text-cancha" }}
+              onChangeStatus={onChangeStatus}
+            />
           ))
         )}
       </Group>
@@ -51,11 +55,9 @@ export default function AttendeeSections({
       {/* Lista de espera: solo aparece cuando el cupo ya se agotó */}
       {classification.waitlist.length > 0 && (
         <Group
-          title="Lista de Espera"
-          subtitle="Suplentes"
-          countLabel={`${classification.waitlist.length}`}
-          hint="Suben automáticamente si un titular se baja."
-          variant="waitlist"
+          title="En espera"
+          situation="entran si alguien se baja"
+          textClass="text-camino"
         >
           {classification.waitlist.map((attendee, index) => (
             <AttendeeRow
@@ -63,7 +65,7 @@ export default function AttendeeSections({
               attendee={attendee}
               badge={{
                 label: `Suplente ${index + 1}`,
-                className: "border-sky-500/40 bg-sky-500/10 text-sky-300",
+                className: "border-camino/40 bg-camino-soft text-camino",
               }}
               onChangeStatus={onChangeStatus}
             />
@@ -73,7 +75,7 @@ export default function AttendeeSections({
 
       {/* En duda */}
       {classification.maybe.length > 0 && (
-        <Group title="En duda" variant="maybe">
+        <Group title="En duda" situation="aún no responden" textClass="text-wait">
           {classification.maybe.map((attendee) => (
             <AttendeeRow key={attendee.id} attendee={attendee} onChangeStatus={onChangeStatus} />
           ))}
@@ -82,7 +84,7 @@ export default function AttendeeSections({
 
       {/* No pueden */}
       {classification.declined.length > 0 && (
-        <Group title="No pueden" variant="declined">
+        <Group title="No pueden" situation="quedaron fuera" textClass="text-baja">
           {classification.declined.map((attendee) => (
             <AttendeeRow key={attendee.id} attendee={attendee} onChangeStatus={onChangeStatus} />
           ))}
@@ -94,37 +96,20 @@ export default function AttendeeSections({
 
 interface GroupProps {
   title: string;
-  subtitle?: string;
-  countLabel?: string;
-  hint?: string;
-  variant?: "going" | "waitlist" | "maybe" | "declined";
+  situation: string;
+  textClass: string;
   children: React.ReactNode;
 }
 
-const GROUP_HEADLINE = {
-  going: "text-emerald-300",
-  waitlist: "text-sky-300",
-  maybe: "text-amber-300",
-  declined: "text-rose-300",
-} as const;
-
-function Group({ title, subtitle, countLabel, hint, variant = "going", children }: GroupProps) {
+function Group({ title, situation, textClass, children }: GroupProps) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-2">
-        <h3 className={`text-xs font-bold tracking-wide uppercase ${GROUP_HEADLINE[variant]}`}>
+        <h3 className={`text-sm font-bold leading-none ${textClass}`}>
           {title}
-          {subtitle !== undefined && (
-            <span className="ml-1.5 font-medium text-slate-500 normal-case">{subtitle}</span>
-          )}
         </h3>
-        {countLabel !== undefined && (
-          <span className="text-xs text-slate-500">{countLabel}</span>
-        )}
+        <span className="text-xs text-ink-soft">{situation}</span>
       </div>
-      {hint !== undefined && (
-        <p className="text-xs text-slate-500">{hint}</p>
-      )}
       <ul className="flex flex-col gap-2">{children}</ul>
     </div>
   );
@@ -140,11 +125,11 @@ function AttendeeRow({
   onChangeStatus: (attendeeId: string, status: Attendee["status"]) => void;
 }) {
   return (
-    <li className="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5">
+    <li className="rounded-xl border border-ink/15 bg-paper p-2.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-sm font-semibold text-slate-100">{attendee.name}</span>
+        <span className="truncate text-sm font-bold text-ink">{attendee.name}</span>
         {badge !== undefined && (
-          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase ${badge.className}`}>
+          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badge.className}`}>
             {badge.label}
           </span>
         )}
@@ -161,7 +146,7 @@ function AttendeeRow({
               aria-pressed={isActive}
               className={`rounded-lg border px-1.5 py-1.5 text-xs font-bold transition active:scale-[0.97] ${
                 isActive ? option.activeClass : option.inactiveClass
-              }`}
+              } ${isActive ? "" : "bg-transparent"}`}
             >
               {option.label}
             </button>

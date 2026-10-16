@@ -1,20 +1,73 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+  --font-sans: var(--font-instrument), ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", sans-serif;
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+
+  /* Papel y tinta */
+  --color-paper: #f4efe3;
+  --color-elev: #fbf8ef;
+  --color-ink: #26303a;
+  --color-ink-soft: #5c6975;
+
+  /* Verde cancha: acción primaria y confirmación "Voy" */
+  --color-cancha: #17533b;
+  --color-cancha-deep: #0f3d2b;
+  --color-cancha-soft: #e0ecdb;
+
+  /* Kits por modo de panorama (el color es información, no decoración) */
+  --color-social: #8f1e60;
+  --color-social-soft: #f6deea;
+  --color-ember: #9a4612;
+  --color-ember-soft: #f7e7d8;
+  --color-deporte: #17533b;
+  --color-deporte-soft: #e0ecdb;
+
+  /* Semáforo de quórum y estados de asistencia */
+  --color-wait: #8e6208;
+  --color-wait-soft: #f3e6c8;
+  --color-camino: #20647f;
+  --color-camino-soft: #ddebf2;
+  --color-baja: #b23a45;
+  --color-baja-soft: #f6dcde;
 }
 
-/* Base visual: fondo profundo, texto suave y scroll limpio en móvil. */
+/* Base: papel cálido, tinta legible y foco de teclado visible. */
 body {
   min-height: 100dvh;
-  @apply bg-slate-950 text-slate-100 antialiased;
+  @apply bg-paper text-ink antialiased;
 }
 
-/* Evita que iOS haga zoom al enfocar inputs con font-size < 16px. */
 input,
-select {
+select,
+textarea {
   &::placeholder {
-    @apply text-slate-500;
+    @apply text-ink-soft/60;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-cancha);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-cancha-soft);
+}
+
+/*
+ * Paleta y tipografía viven en @theme arriba. La única metáfora material
+ * (la boleta troquelada) se arma con spans absolutos dentro del componente,
+ * alineados con su línea de perforado.
+ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

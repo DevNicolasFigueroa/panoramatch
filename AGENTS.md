@@ -14,7 +14,8 @@ Aplicación web para organizar panoramas con amigos (salidas, asados o partidos)
 
 ## Convenciones
 - Código (variables, funciones, tipos, archivos) en inglés; textos de la interfaz y comentarios en español.
-- Diseño *UI-first*, limpio y moderno, mobile-first.
+- Diseño *UI-first* "Cuentas claras en la cancha": tokens de color en `globals.css` (@theme: paper/elev/ink/cancha + kits por modo: social, ember, deporte). Tipografía vía `next/font`: Bricolage Grotesque (display y montos) + Instrument Sans (UI). Sin sombras suaves genéricas: bordes de tinta, sombra dura solo en la boleta.
+- Diseño mobile-first; el color codifica información (modo, quórum, estado), nunca decoración.
 - Si cambias la estructura de datos, conserva retrocompatibilidad: `loadPanoramaStore` migra el shape legacy `{ event, attendees }` y descarta ítems corruptos sin tirar la app.
 
 ## Reglas de dominio / trampas conocidas
