@@ -24,6 +24,7 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
 - `AGENTS.md` debe reflejar solo comandos verificables: llegó a listar `npm run lint`/`npm test` inexistentes. Si falta algo (lint, tests), proponlo, no lo inventes.
 
 ## Próximos pasos
+- **Pendiente del dueño (1 clic web)**: GitHub dejó `develop` como rama por defecto (fue la primera subida). Poner `main` como default en github.com → Settings → Branches (requiere sesión; no es posible por gitremote).
 - Formalizar tests con un script propio (ej. `node --test` sobre copias con extensión, o vitest aprovechando tsx) y decidir lint (ESLint flat config) — pedir go del dueño.
 - Botón de compartir por WhatsApp archivado por el dueño (se retomará luego; pendiente decidir flujo: texto prellenado vs link con datos).
 - Desplegar a Supabase: este listado (`SavedPanorama[]` con sus asistentes) es el contrato natural de tablas `panoramas`/`attendees`.
