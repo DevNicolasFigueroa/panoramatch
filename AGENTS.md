@@ -10,6 +10,7 @@ Aplicación web para organizar panoramas con amigos (salidas, asados o partidos)
 - Desarrollo: `npm run dev` → http://localhost:3000
 - Compilación y tipos: `npm run build`; typecheck rápido: `npx tsc --noEmit`.
 - Aún NO existe lint ni test suite formal; la lógica pura de `src/core/` se puede verificar con `node` (importando por `file:///`).
+- Git: principal `main`, rama de trabajo `develop` (remoto `origin` = github.com/DevNicolasFigueroa/panoramatch). Flujo: crear `feature/*` desde `develop`, subir con `git push -u origin <rama>` y fusionar a `main` con `--ff-only`. Primer push abre login de navegador (Git Credential Manager; el CLI `gh` no está instalado).
 
 ## Convenciones
 - Código (variables, funciones, tipos, archivos) en inglés; textos de la interfaz y comentarios en español.
