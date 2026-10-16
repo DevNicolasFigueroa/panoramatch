@@ -6,7 +6,7 @@
  * y la boleta financiera en CLP. Toda la lógica ya está en `src/core/`.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Attendee, SavedPanorama } from "@/core/types";
 import { formatPanoramaStartsAt } from "@/core/datetime-cl";
 import {
@@ -82,6 +82,9 @@ export default function PanoramaDashboard({
         </div>
       </section>
 
+      {/* El enlace compartido: los amigos responden sin crear cuenta */}
+      <ShareLinkSection panoramaId={panorama.id} />
+
       {/* Módulo de Confirmación Rápida */}
       <AddFriendForm onAddFriend={onAddFriend} />
 
@@ -113,5 +116,39 @@ export default function PanoramaDashboard({
         </button>
       </div>
     </div>
+  );
+}
+
+/** Enlace público de votación: copiarlo para enviarlo por WhatsApp, etc. */
+function ShareLinkSection({ panoramaId }: { panoramaId: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    const shareUrl = `${window.location.origin}/p/${panoramaId}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      window.prompt("Copia el enlace para responder:", shareUrl);
+    }
+  };
+
+  return (
+    <section className="rounded-2xl border border-ink/15 bg-elev p-4">
+      <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+        Que ellos respondan solos
+      </h2>
+      <p className="mt-0.5 text-sm text-ink-soft">
+        Comparte este enlace: tus amigos marcan Voy / En duda / No puedo sin crear cuenta.
+      </p>
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        className="mt-3 w-full rounded-xl border border-cancha/40 bg-cancha-soft px-3 py-2.5 text-sm font-bold text-cancha transition hover:border-cancha active:scale-[0.99]"
+      >
+        {copied ? "¡Enlace copiado! ✓" : "Copiar enlace para responder"}
+      </button>
+    </section>
   );
 }

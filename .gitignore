@@ -8,6 +8,9 @@
 # producción
 /build
 
+# variables de entorno y credenciales locales
+.env*.local
+
 # misc
 .DS_Store
 *.pem
