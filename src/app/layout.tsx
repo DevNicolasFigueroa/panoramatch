@@ -26,14 +26,24 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+/**
+ * Aplica el tema ANTES del primer pintado para evitar el flash del tema
+ * equivocado: usa la elección guardada ('light'|'dark') o, si nunca se
+ * eligió, el tema del sistema. Debe fallar en silencio (modo privado).
+ */
+const ANTI_THEME_FLASH_SCRIPT = `(function(){try{var t=localStorage.getItem('panoramatch-ui-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme='light'}})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${bricolage.variable} ${instrument.variable}`}>
-      <body className="font-sans">{children}</body>
+    <html lang="es" className={`${bricolage.variable} ${instrument.variable}`} suppressHydrationWarning>
+      <body className="font-sans">
+        <script dangerouslySetInnerHTML={{ __html: ANTI_THEME_FLASH_SCRIPT }} />
+        {children}
+      </body>
     </html>
   );
 }

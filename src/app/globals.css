@@ -5,7 +5,7 @@
     "Segoe UI", sans-serif;
   --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
 
-  /* Papel y tinta */
+  /* Papel y tinta (modo claro) */
   --color-paper: #f4efe3;
   --color-elev: #fbf8ef;
   --color-ink: #26303a;
@@ -31,6 +31,49 @@
   --color-camino-soft: #ddebf2;
   --color-baja: #b23a45;
   --color-baja-soft: #f6dcde;
+
+  /* Sombras de papel: la boleta usa sombra dura de tinta */
+  --color-boleta-shadow: #26303a;
+  --shadow-boleta: 3px 3px 0 0 var(--color-boleta-shadow);
+}
+
+/*
+ * Modo oscuro "Cancha nocturna": solo overrides de variables. Los componentes
+ * no usan variantes dark: — todas sus utilidades apuntan a estos tokens y
+ * cambian de piel solas al alternar el atributo en <html>.
+ */
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-paper: #111b16;
+  --color-elev: #182420;
+  --color-ink: #ede7d8;
+  --color-ink-soft: #9aa79e;
+
+  --color-cancha: #4cb982;
+  --color-cancha-deep: #2f7a54;
+  --color-cancha-soft: #1b2e24;
+
+  --color-social: #e38cc0;
+  --color-social-soft: #2b1723;
+  --color-ember: #e0a078;
+  --color-ember-soft: #2a1d12;
+  --color-deporte: #4cb982;
+  --color-deporte-soft: #1b2e24;
+
+  --color-wait: #d9a441;
+  --color-wait-soft: #2b2413;
+  --color-camino: #6fb7d6;
+  --color-camino-soft: #142430;
+  --color-baja: #e07885;
+  --color-baja-soft: #2a1518;
+
+  /* En noche, la sombra dura de la boleta es un verde casi negro */
+  --color-boleta-shadow: #060f0b;
+}
+
+:root {
+  color-scheme: light;
 }
 
 /* Base: papel cálido, tinta legible y foco de teclado visible. */
@@ -56,11 +99,14 @@ textarea {
   background: var(--color-cancha-soft);
 }
 
-/*
- * Paleta y tipografía viven en @theme arriba. La única metáfora material
- * (la boleta troquelada) se arma con spans absolutos dentro del componente,
- * alineados con su línea de perforado.
- */
+/* Transición corta al alternar el tema (respeta reduced-motion). */
+@media (prefers-reduced-motion: no-preference) {
+  body {
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *,

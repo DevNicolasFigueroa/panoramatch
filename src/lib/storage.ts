@@ -20,6 +20,12 @@ import { migrateLegacyStore } from "@/core/panorama-collection";
 
 export const PANORAMATCH_STORAGE_KEY = "panoramatch-v1-data";
 
+/** Preferencia de interfaz (tema claro/oscuro): clave propia, nunca mezclada con los datos. */
+export const PANORAMATCH_UI_THEME_KEY = "panoramatch-ui-theme";
+
+/** Tema válido de la interfaz. */
+export type UiTheme = "light" | "dark";
+
 /** Guardas mínimas de uso (localStorage no existe fuera del navegador). */
 const isBrowser = () => typeof window !== "undefined" && "localStorage" in window;
 
@@ -139,5 +145,17 @@ export function savePanoramaStore(state: PanoramaStoreState): void {
     window.localStorage.setItem(PANORAMATCH_STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Silencio: cuota llena o modo privado. No rompemos la UI.
+  }
+}
+
+/** Persiste la elección manual del tema. La valida antes de escribir. */
+export function saveUiTheme(theme: UiTheme): void {
+  if (!isBrowser() || (theme !== "light" && theme !== "dark")) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(PANORAMATCH_UI_THEME_KEY, theme);
+  } catch {
+    // Silencio: la preferencia es cosmética; el tema sigue funcionando en memoria.
   }
 }

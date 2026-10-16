@@ -7,6 +7,7 @@
  */
 
 import { usePanoramaStore } from "@/lib/use-panorama-store";
+import ThemeToggle from "@/components/theme-toggle";
 import HomeView from "@/components/home-view";
 import PanoramaDashboard from "@/components/panorama-dashboard";
 
@@ -15,13 +16,14 @@ export default function PanoramaApp() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-5 px-4 pt-7 pb-12 sm:max-w-lg">
-      {/* Marca: wordmark tinta/cancha, sin adornos */}
-      <header className="flex items-center justify-center select-none">
+      {/* Cabecera: marca centrada y botón de tema a la derecha */}
+      <header className="flex items-center justify-between select-none">
+        <span className="w-9" aria-hidden />
         <h1 className="font-display text-xl font-bold tracking-tight">
           <span className="text-ink">Panora</span>
           <span className="text-cancha">Match</span>
         </h1>
-        <span className="ml-2 h-1.5 w-1.5 rounded-full bg-cancha" aria-hidden />
+        <ThemeToggle />
       </header>
 
       {!isHydrated ? (

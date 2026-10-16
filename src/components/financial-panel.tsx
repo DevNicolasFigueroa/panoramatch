@@ -14,7 +14,7 @@ export default function FinancialPanel({
   split: CostSplit;
 }) {
   return (
-    <aside className="relative rounded-2xl border border-ink bg-elev px-5 py-5 shadow-[3px_3px_0_0_rgba(38,48,58,0.9)]">
+    <aside className="relative rounded-2xl border border-ink bg-elev px-5 py-5 shadow-boleta">
       <div className="flex items-baseline justify-between gap-3 pb-3">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">
           La boleta
