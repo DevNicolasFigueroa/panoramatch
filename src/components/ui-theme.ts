@@ -38,19 +38,19 @@ export const MODE_STYLES: Record<
   { label: string; chipClass: string; barClass: string; accentText: string }
 > = {
   social: {
-    label: "Social (Salida/Bar)",
+    label: "Social",
     chipClass: "border-social/30 bg-social-soft text-social",
     barClass: "bg-social",
     accentText: "text-social",
   },
   colaborativo: {
-    label: "Colaborativo (Asado/Junta)",
+    label: "Colaborativo",
     chipClass: "border-ember/30 bg-ember-soft text-ember",
     barClass: "bg-ember",
     accentText: "text-ember",
   },
   deportivo: {
-    label: "Deportivo (Fútbol/Partido)",
+    label: "Deportivo",
     chipClass: "border-deporte/30 bg-deporte-soft text-deporte",
     barClass: "bg-deporte",
     accentText: "text-deporte",

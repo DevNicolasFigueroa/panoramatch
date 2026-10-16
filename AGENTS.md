@@ -16,6 +16,7 @@ Aplicación web para organizar panoramas con amigos (salidas, asados o partidos)
 - Código (variables, funciones, tipos, archivos) en inglés; textos de la interfaz y comentarios en español.
 - Diseño *UI-first* "Cuentas claras en la cancha": tokens de color en `globals.css` (@theme: paper/elev/ink/cancha + kits por modo: social, ember, deporte). Tipografía vía `next/font`: Bricolage Grotesque (display y montos) + Instrument Sans (UI). Sin sombras suaves genéricas: bordes de tinta, sombra dura solo en la boleta.
 - Diseño mobile-first; el color codifica información (modo, quórum, estado), nunca decoración.
+- Etiquetas de modo genéricas en toda la UI de listado/dashboard (Social / Colaborativo / Deportivo, chips/tarjetas); la descripción larga de cada modo vive únicamente en el selector del creador.
 - Tema claro/oscuro: solo overrides de variables bajo `html[data-theme="dark"]` en `globals.css` — NO crear variantes `dark:` en componentes. Preferencia persistida en la clave separada `panoramatch-ui-theme` ('light'|'dark', no en el store de datos); el script anti-flash de `layout.tsx` fija `data-theme` antes del primer pintado y `use-ui-theme.ts` solo lee ese atributo. `src/core/` jamás sabe del tema.
 - Si cambias la estructura de datos, conserva retrocompatibilidad: `loadPanoramaStore` migra el shape legacy `{ event, attendees }` y descarta ítems corruptos sin tirar la app.
 
