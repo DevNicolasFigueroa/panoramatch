@@ -3,7 +3,7 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
-- **Integración Supabase (rama `feature/supabase-base`, desde `develop`)**: auth Google (`/login` + `/auth/callback`), dashboard `/` protegido server-side, tablas `profiles`/`panoramas`/`participants` con RLS, y votación de invitados externos sin cuenta en `/p/<panorama_id>`. `tsc` + `build` limpios; humo server-side OK (`/login` 200, `/` 307→login si no hay sesión, enlace inválido 404). Falta el E2E con Google real: el provider Google aún no está activado (acción del dueño: Google Cloud OAuth + Dashboard Supabase, redirect `https://zxtldkpyngghfeigbnxt.supabase.co/auth/v1/callback`).
+- **Integración Supabase (en `develop`, remota y local al día; `main` intacta)**: commits `b25aba7` (integración) y `8d07dd2` (config MCP + skills lock). Rama `feature/supabase-base` sigue en remoto como referencia. Auth Google (`/login` + `/auth/callback`), dashboard `/` protegido server-side, tablas `profiles`/`panoramas`/`participants` con RLS, votación de invitados externos sin cuenta en `/p/<panorama_id>`. Provider Google ya activado y probado hasta la página de consentimiento de Google; `tsc` + `build` limpios.
 - Migraciones aplicadas vía MCP: `create_panoramatch_tables`, `panoramatch_rls_and_triggers`, `grant_client_side_participant_ids`, `hardening_function_security`. Advisors de seguridad: solo queda el WARN `auth_leaked_password_protection` (activarlo en Dashboard → Auth).
 - Voto de invitado probado real contra la API: PATCH `participants` CON header secreto actualiza y el trigger asigna `confirmed_order`; sin header o con secreto malo queda bloqueado (RLS).
 
