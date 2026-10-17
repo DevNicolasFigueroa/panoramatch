@@ -42,6 +42,7 @@ Aplicación web para organizar panoramas con amigos (salidas, asados o partidos)
 - No guardes nunca datos sensibles (claves, tokens, datos personales).
 
 ## Forma de trabajar
+- SDD (Spec-Driven Development): lee `docs/constitution.md` y la spec activa (`specs/NNN-*/`) antes de tocar código.
 - Haz solo lo que se pide: no añadas funcionalidades por tu cuenta.
 - En tareas grandes o refactors, planifica antes de tocar código. Cambios pequeños y enfocados; no reescribas lo que ya funciona.
 - Lógica/reglas nuevas: primero en `src/core/`, luego se consumen desde la interfaz.

@@ -3,6 +3,8 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
+- **Constitución SDD creada (`docs/constitution.md`)**: 6 principios innegociables (stack controlado incluyendo Supabase, spec manda en `specs/NNN-*/`, lógica pura con `now` como parámetro, puerta `node --test`, datos/dominio sagrados, idiomas fijos). Pendiente formalizar: reflejar `now` como parámetro en `core/datetime-cl.ts` (`getTodayLocalValue(now?)`) en la primera spec.
+- **Login con Google funcionando de punta a punta**: provider activo en Supabase (probado hasta la página de consentimiento de Google); la primera sesión real del dueño confirmó el flujo E2E `/login` → `/auth/callback` → dashboard.
 - **Integración Supabase (en `develop`, remota y local al día; `main` intacta)**: commits `b25aba7` (integración) y `8d07dd2` (config MCP + skills lock). Rama `feature/supabase-base` sigue en remoto como referencia. Auth Google (`/login` + `/auth/callback`), dashboard `/` protegido server-side, tablas `profiles`/`panoramas`/`participants` con RLS, votación de invitados externos sin cuenta en `/p/<panorama_id>`. Provider Google ya activado y probado hasta la página de consentimiento de Google; `tsc` + `build` limpios.
 - Migraciones aplicadas vía MCP: `create_panoramatch_tables`, `panoramatch_rls_and_triggers`, `grant_client_side_participant_ids`, `hardening_function_security`. Advisors de seguridad: solo queda el WARN `auth_leaked_password_protection` (activarlo en Dashboard → Auth).
 - Voto de invitado probado real contra la API: PATCH `participants` CON header secreto actualiza y el trigger asigna `confirmed_order`; sin header o con secreto malo queda bloqueado (RLS).
