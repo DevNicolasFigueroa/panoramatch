@@ -3,30 +3,34 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
-- **Constitución SDD creada (`docs/constitution.md`)**: 6 principios innegociables (stack controlado incluyendo Supabase, spec manda en `specs/NNN-*/`, lógica pura con `now` como parámetro, puerta `node --test`, datos/dominio sagrados, idiomas fijos). Pendiente formalizar: reflejar `now` como parámetro en `core/datetime-cl.ts` (`getTodayLocalValue(now?)`) en la primera spec.
-- **Login con Google funcionando de punta a punta**: provider activo en Supabase (probado hasta la página de consentimiento de Google); la primera sesión real del dueño confirmó el flujo E2E `/login` → `/auth/callback` → dashboard.
-- **Integración Supabase (en `develop`, remota y local al día; `main` intacta)**: commits `b25aba7` (integración) y `8d07dd2` (config MCP + skills lock). Rama `feature/supabase-base` sigue en remoto como referencia. Auth Google (`/login` + `/auth/callback`), dashboard `/` protegido server-side, tablas `profiles`/`panoramas`/`participants` con RLS, votación de invitados externos sin cuenta en `/p/<panorama_id>`. Provider Google ya activado y probado hasta la página de consentimiento de Google; `tsc` + `build` limpios.
-- Migraciones aplicadas vía MCP: `create_panoramatch_tables`, `panoramatch_rls_and_triggers`, `grant_client_side_participant_ids`, `hardening_function_security`. Advisors de seguridad: solo queda el WARN `auth_leaked_password_protection` (activarlo en Dashboard → Auth).
-- Voto de invitado probado real contra la API: PATCH `participants` CON header secreto actualiza y el trigger asigna `confirmed_order`; sin header o con secreto malo queda bloqueado (RLS).
+- **Spec 001 implementada (RAMA `feat/001-modo-social-match`)**: votación de lugares del modo Social completa: form opcional de candidatos, tablero "¿A dónde vamos?" en dashboard (votar propio/delegado, declarar Match) y en el enlace del invitado (vota y propone solo si va "Voy"), conteos públicos, cierre definitivo tras Match. Puertas: `tsc` limpio, `build` EXIT=0, `npm run test` 14/14.
+- **Login con Google funcionando E2E** (dashboard protegido, `/login`, `/auth/callback`); provider activo por Dashboard (manual).
+- Tablas: `profiles`, `panoramas`, `participants`, `place_candidates`, `place_votes` (+ `panoramas.match_candidate_id`), todas con RLS.
+- Migraciones MCP: `create_panoramatch_tables`, `panoramatch_rls_and_triggers`, `grant_client_side_participant_ids`, `hardening_function_security`, `create_place_vote_tables`, `place_vote_rls`, `place_votes_guest_delete`, `place_vote_polish_index`.
+- RLS de lugares probado empíricamente con REST (12 casos): solo "Voy" con su header toca su voto `voter_ref = participant_id`; `delegated` bloqueado por privilegio de columna; Match cerrado = sin escrituras; lectura pública.
+- Advisors: queda configurar "Leaked password protection" (Dashboard → Auth). WARN `multiple_permissive_policies` es patrón aceptado (público + dueño + invitado), igual en V2.
 
 ## Decisiones (y por qué)
-- **Empieza vacío en la nube (D6)**: nada se importa automáticamente del localStorage viejo; ese legado queda solo como respaldo y el usuario crea fresco. `migrateLegacyStore` sigue viva en core para lecturas V1.0.
-- **Creador gestiona desde su cuenta (D1)**: solo con sesión Google; el invitado externo siempre sin cuenta.
-- **`guest_secret` + RLS por header (D2)**: el secreto (uuid) nace de la primera votación y vive en `panoramatch-guest-v1` del navegador del invitado; viaja en header `x-participant-secret` (NUNCA en la URL). Evita Edge Function y lo verificamos empíricamente.
-- **`starts_at` es texto local `'YYYY-MM-DDTHH:mm'` (D3)**: conserva el orden lexicográfico y las reglas de core sin riesgo UTC; check de formato en la DB.
-- **Título único por creador (D4)**, nombre de participante único por panorama, ambos case-insensitive en la DB.
-- **`confirmed_order` solo lo fija el trigger DB** (con lock por panorama): ni creador ni invitados manipulan la fila de titulares; el ascenso de suplentes usan simplemente la clasificación de `core/`.
-- **Escritura optimista + reversión**: el store muta el estado local de inmediato y escribe en Supabase después; si falla, revierte y muestra el error en español (banner dismissible en el dashboard).
+- **D6 empieza vacío en la nube**: nada se importa del localStorage viejo (`migrateLegacyStore` viva en core).
+- **D1/D2**: creador con sesión Google; invitado sin cuenta con `guest_secret` por header `x-participant-secret`, jamás en URL.
+- **D3 `starts_at` es texto local** `'YYYY-MM-DDTHH:mm'` (check DB); nunca `toISOString()` ni `new Date("AAAA-MM-DD")`.
+- **D7 Social sin titulares/suplentes**: votan creador + todos los "Voy" (incluso con cupo definido); delegación del creador SOLO para confirmados anotados a mano (`creatorAdded`, derivado de fila sin `guest_secret` ni `auth_user_id`).
+- **D8 voto mutable hasta el Match**: `match_candidate_id` en la fila del panorama cierra TODO (insert/update/candidatos) en RLS; conteo congelado.
+- **D9 un voto vigente por votante**: índice único `(panorama_id, voter_ref)` + upsert `onConflict`; cambiar voto = update de su fila.
+- **D10 tests sin dependencias nuevas**: `tsconfig.test.json` compila `src/core` a `.test-build/` (CommonJS, gitignore) y `npm run test` corre `node --test ".test-build/**/*.test.js"`; resuelve el problema de imports sin extensión.
+- **Escritura optimista + reversión** en store; candidatos iniciales del form se insertan con ids del cliente.
 
 ## Aprendizajes y errores a evitar
 - Los updaters de `setState` NO corren sincrónicamente: validar duplicados antes de `setState`.
-- Soporte de login (localStorage, sesión) SOLO en `useEffect` tras montar: render inicial sin efecto rompe la hidratación SSR.
-- Node ESM no resuelve imports sin extensión al testear `src/core/` directo: copiar a temp añadiendo `.ts` a los `from "./x"`.
-- `AGENTS.md` solo comandos verificables; en `opencode.json` los MCP van en `mcp.servers` (raíz `mcp` deprecada).
-- Windows: `npm.ps1` está bloqueado por la política de ejecución — usar `npm.cmd`, `npx.cmd`, `curl.exe`.
-- `current_setting('request.headers', true)::json ->> 'x-participant-secret'` funciona en RLS de Supabase (probado); apikey publishable `sb_publishable_*` sirve como header `apikey` en el REST.
-- Pendiente de limpieza: usuario de auth de prueba (email `panoramatch.rls.test.*@gmail.com`, id perfil `60310436-e6fa-4963-88a4-5f0a73a200ae`); borrarlo desde Auth Admin, no por SQL.
+- Efectos SSR-sensibles solo tras montar (reload del reloj, identidad de invitado).
+- Windows: `npm.cmd`/`npx.cmd`/`curl.exe` (PowerShell bloquea `npm.ps1`); `Select-String` sobre build puede devolver exit code 1 falso — verificar con `echo $LASTEXITCODE`.
+- RLS: comparar `voter_ref` (text) con uuid usando `q.id::text = voter_ref` (uuid = text lanza 42883); `auth.uid()` envuelto en `(select auth.uid())` cuando toque escribir políticas nuevas.
+- PostgREST upsert requiere el índice único exacto en `onConflict`; el payload del invitado NO incluye `delegated` (privilegio de columna lo prohíbe).
+- `AGENTS.md` solo comandos verificables; MCP en `mcp.servers` de `opencode.json`.
+- Usuario de pruebas pendiente de borrar en Auth Admin: `panoramatch.rls.test.*@gmail.com` (perfil `60310436-e6fa-4963-88a4-5f0a73a200ae`).
 
 ## Próximos pasos
-- E2E real: activar provider Google, crear panorama, votar como invitado en ventana privada (cupo, espera y conflicto de nombre incluidos).
-- Considerar Realtime (actualización en vivo del tablero) como fase siguiente del dueño.
+- **Smoke del dueño 375px** (T10-b en tasks.md): crear Social con lugares, votar/cambiar, delegación, empate, Match, invitado en ventana privada, cupo lleno y Lista de Espera.
+- Consolidar `feat/001-modo-social-match` → `develop` → `main` (`--ff-only`) tras la smoke.
+- Specs 002/003: Colaborativo (gastos por partida) y Deportivo (puntos en la cancha).
+- Considerar Realtime para tablero vivo.

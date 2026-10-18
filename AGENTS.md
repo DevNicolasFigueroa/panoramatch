@@ -13,7 +13,7 @@ Aplicación web para organizar panoramas con amigos (salidas, asados o partidos)
 ## Comandos
 - Desarrollo: `npm run dev` → http://localhost:3000 (requiere `.env.local` con las credenciales de Supabase).
 - Compilación y tipos: `npm run build`; typecheck rápido: `npx tsc --noEmit`.
-- Aún NO existe lint ni test suite formal; la lógica pura de `src/core/` se puede verificar con `node` (importando por `file:///`).
+- Tests de lógica pura: `npm run test` (compila `src/core` a `.test-build/` con `tsconfig.test.json` y corre `node --test`; sin dependencias nuevas).
 - Esquema de Supabase: solo vía MCP (`apply_migration`, `execute_sql` de solo lectura), nunca desde un script SQL local aplicado a mano.
 - Git: principal `main`, rama de trabajo `develop` (remoto `origin` = github.com/DevNicolasFigueroa/panoramatch). Flujo: crear `feature/*` desde `develop`, subir con `git push -u origin <rama>` y fusionar a `main` con `--ff-only`. Primer push abre login de navegador (Git Credential Manager; el CLI `gh` no está instalado).
 
