@@ -13,6 +13,7 @@ import type {
   PanoramaMode,
   SavedPanorama,
 } from "@/core/types";
+import type { PlaceCandidate, PlaceVoteRecord } from "@/core/place-vote";
 
 /** Filas de `public.panoramas`. */
 export interface PanoramaRow {
@@ -57,6 +58,8 @@ export function mapParticipantRowToAttendee(row: ParticipantRow): Attendee {
     name: row.name,
     status: row.status,
     confirmedOrder: row.confirmed_order,
+    // Sin enlace (sin secreto) y sin cuenta Google: lo anotó el creador a mano.
+    creatorAdded: row.guest_secret === null && row.auth_user_id === null,
   };
 }
 
@@ -212,4 +215,178 @@ export async function deletePanoramaRow(
   if (error !== null) {
     throw new Error(error.message);
   }
+}
+
+/* ─────────────── ¿A dónde vamos? (modo Social) ─────────────── */
+
+/** Filas de `public.place_candidates`. */
+export interface PlaceCandidateRow {
+  id: string;
+  panorama_id: string;
+  name: string;
+  created_at: string;
+}
+
+/** Filas de `public.place_votes`. */
+export interface PlaceVoteRow {
+  id: string;
+  panorama_id: string;
+  candidate_id: string;
+  voter_ref: string;
+  delegated: boolean;
+  created_at: string;
+}
+
+/** El tablero de lugares del panorama tal como vive en la base. */
+export interface PlaceData {
+  candidates: PlaceCandidate[];
+  votes: PlaceVoteRecord[];
+  matchCandidateId: string | null;
+}
+
+function mapCandidateRow(row: PlaceCandidateRow): PlaceCandidate {
+  return { id: row.id, name: row.name };
+}
+
+function mapVoteRow(row: PlaceVoteRow): PlaceVoteRecord {
+  return { candidateId: row.candidate_id, voterRef: row.voter_ref, delegated: row.delegated };
+}
+
+/** Lee candidatos, votos vigentes y el Match declarado del panorama. */
+export async function fetchPlaceData(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<PlaceData> {
+  const [candidatesRes, votesRes, matchRes] = await Promise.all([
+    client
+      .from("place_candidates")
+      .select("*")
+      .eq("panorama_id", panoramaId)
+      .order("created_at", { ascending: true }),
+    client
+      .from("place_votes")
+      .select("*")
+      .eq("panorama_id", panoramaId)
+      .order("created_at", { ascending: true }),
+    client
+      .from("panoramas")
+      .select("match_candidate_id")
+      .eq("id", panoramaId)
+      .maybeSingle(),
+  ]);
+
+  if (candidatesRes.error !== null) {
+    throw new Error(candidatesRes.error.message);
+  }
+  if (votesRes.error !== null) {
+    throw new Error(votesRes.error.message);
+  }
+  if (matchRes.error !== null) {
+    throw new Error(matchRes.error.message);
+  }
+
+  const candidateRows = (candidatesRes.data ?? []) as PlaceCandidateRow[];
+  const voteRows = (votesRes.data ?? []) as PlaceVoteRow[];
+  const match = matchRes.data as { match_candidate_id: string | null } | null;
+  return {
+    candidates: candidateRows.map(mapCandidateRow),
+    votes: voteRows.map(mapVoteRow),
+    matchCandidateId: match?.match_candidate_id ?? null,
+  };
+}
+
+/**
+ * Inserta un candidato nuevo. Con `candidateId` se usa el id generado por el
+ * cliente (flujo optimista del creador); sin él, lo genera la base (invitado).
+ */
+export async function insertPlaceCandidateRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; name: string; candidateId?: string },
+): Promise<PlaceCandidateRow> {
+  const { data, error } = await client
+    .from("place_candidates")
+    .insert({
+      ...(payload.candidateId !== undefined ? { id: payload.candidateId } : {}),
+      panorama_id: payload.panoramaId,
+      name: payload.name,
+    })
+    .select()
+    .single();
+
+  return assertData(data, error) as PlaceCandidateRow;
+}
+
+/** Elimina un candidato (solo creador; la base valida la sesión). */
+export async function deletePlaceCandidateRow(
+  client: SupabaseClient,
+  candidateId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("place_candidates")
+    .delete()
+    .eq("id", candidateId);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Emite o cambia el voto vigente del votante en la base (una fila por
+ * votante, upsert contra el índice único `panorama_id + voter_ref`).
+ * Para el invitado se omite `delegated` (no tiene privilegio en esa columna).
+ */
+export async function upsertPlaceVoteRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; candidateId: string; voterRef: string; delegated?: boolean },
+): Promise<PlaceVoteRow> {
+  const { data, error } = await client
+    .from("place_votes")
+    .upsert(
+      {
+        panorama_id: payload.panoramaId,
+        candidate_id: payload.candidateId,
+        voter_ref: payload.voterRef,
+        ...(payload.delegated !== undefined ? { delegated: payload.delegated } : {}),
+      },
+      { onConflict: "panorama_id,voter_ref" },
+    )
+    .select()
+    .single();
+
+  return assertData(data, error) as PlaceVoteRow;
+}
+
+/** Retira el voto vigente de un votante (dejó de estar "Voy"). */
+export async function deletePlaceVoteRow(
+  client: SupabaseClient,
+  panoramaId: string,
+  voterRef: string,
+): Promise<void> {
+  const { error } = await client
+    .from("place_votes")
+    .delete()
+    .eq("panorama_id", panoramaId)
+    .eq("voter_ref", voterRef);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Declara el Match: fija el candidato y cierra la votación en la base. */
+export async function declareMatchRow(
+  client: SupabaseClient,
+  panoramaId: string,
+  candidateId: string,
+): Promise<string | null> {
+  const { data, error } = await client
+    .from("panoramas")
+    .update({ match_candidate_id: candidateId })
+    .eq("id", panoramaId)
+    .select("match_candidate_id")
+    .single();
+
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  return (data as { match_candidate_id: string | null } | null)?.match_candidate_id ?? null;
 }

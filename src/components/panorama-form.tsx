@@ -12,6 +12,7 @@ import type { CreateEventInput, PanoramaMode } from "@/core/types";
 import { PANORAMA_MODES } from "@/core/types";
 import { getTodayLocalValue, isValidLocalDatetime } from "@/core/datetime-cl";
 import { formatCLP, isValidCLPAmount } from "@/core/currency-clp";
+import { MAX_PLACE_CANDIDATES } from "@/core/place-vote";
 import { MODE_EMOJI } from "@/components/ui-theme";
 
 /** Errores por campo, presentados en español para el usuario. */
@@ -21,6 +22,7 @@ interface FormErrors {
   startsAt?: string;
   maxCapacity?: string;
   totalCostCLP?: string;
+  placeCandidates?: string;
 }
 
 export default function PanoramaForm({
@@ -35,16 +37,18 @@ export default function PanoramaForm({
   const [mode, setMode] = useState<PanoramaMode | null>(null);
   const [capacityText, setCapacityText] = useState("");
   const [costText, setCostText] = useState("");
+  const [placeNamesText, setPlaceNamesText] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
 
   useEffect(() => {
     // Por defecto: hoy, ahora mismo, en hora local (nunca UTC).
-    setStartsAt(getTodayLocalValue());
+    // El reloj se lee aquí (capa de interfaz) y se pasa a la lógica como parámetro.
+    setStartsAt(getTodayLocalValue(new Date()));
   }, []);
 
   const handleSubmit = (formEvent: React.FormEvent<HTMLFormElement>) => {
     formEvent.preventDefault();
-    const nextErrors = validate(title, mode, startsAt, capacityText, costText);
+    const nextErrors = validate(title, mode, startsAt, capacityText, costText, placeNamesText);
     if (nextErrors !== null) {
       setErrors(nextErrors);
       return;
@@ -56,6 +60,11 @@ export default function PanoramaForm({
       startsAt,
       maxCapacity: capacityText.trim() === "" ? null : Number(capacityText),
       totalCostCLP: Number(costText),
+      // Social: candidatos iniciales, uno por línea (opcional; core los normaliza).
+      placeCandidates:
+        mode === "social"
+          ? placeNamesText.split("\n").map((line) => line.trim())
+          : undefined,
     });
     if (!created) {
       // Título repetido entre los panoramas guardados.
@@ -184,6 +193,27 @@ export default function PanoramaForm({
           </div>
         </div>
 
+        {/* Lugares candidatos (solo modo Social) */}
+        {mode === "social" && (
+          <div className="mt-4 flex flex-col gap-1.5">
+            <label htmlFor="placeCandidates" className="text-sm font-semibold text-ink">
+              ¿A dónde pueden ir? (opcional)
+            </label>
+            <textarea
+              id="placeCandidates"
+              value={placeNamesText}
+              onChange={(e) => setPlaceNamesText(e.target.value)}
+              rows={3}
+              placeholder={"Pub El Cachapoal\nCantina La Flota"}
+              className="w-full rounded-xl border border-ink/20 bg-paper px-3.5 py-2.5 text-base text-ink outline-none transition focus:border-cancha"
+            />
+            <span className="text-xs text-ink-soft">
+              Un lugar por línea, máximo {MAX_PLACE_CANDIDATES}. Puedes agregar más después.
+            </span>
+            {errors.placeCandidates !== undefined && <FieldError message={errors.placeCandidates} />}
+          </div>
+        )}
+
         {/* Acción */}
         <button
           type="submit"
@@ -206,6 +236,7 @@ function validate(
   startsAt: string,
   capacityText: string,
   costText: string,
+  placeNamesText: string,
 ): FormErrors | null {
   const errors: FormErrors = {};
 
@@ -217,6 +248,17 @@ function validate(
   }
   if (!isValidLocalDatetime(startsAt)) {
     errors.startsAt = "Revisa la fecha y hora del evento.";
+  }
+
+  // Lugares candidatos solo en Social: máximo 10, cada uno con nombre.
+  if (mode === "social") {
+    const lines = placeNamesText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+    if (lines.length > MAX_PLACE_CANDIDATES) {
+      errors.placeCandidates = `Máximo ${MAX_PLACE_CANDIDATES} lugares por panorama.`;
+    }
   }
 
   const capacityTrimmed = capacityText.trim();

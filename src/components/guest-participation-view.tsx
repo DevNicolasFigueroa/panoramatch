@@ -33,6 +33,7 @@ import {
 } from "@/lib/supabase-panorama-repo";
 import ThemeToggle from "@/components/theme-toggle";
 import QuorumSemaphore from "@/components/quorum-semaphore";
+import GuestPlaceVote from "@/components/guest-place-vote";
 import { MODE_EMOJI, MODE_STYLES, STATUS_OPTIONS } from "@/components/ui-theme";
 
 const SPLASH = (
@@ -343,6 +344,15 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
             </p>
           )}
         </section>
+      )}
+
+      {/* ¿A dónde vamos? (modo Social): conteos públicos; vota solo "Voy" */}
+      {event.mode === "social" && (
+        <GuestPlaceVote
+          panorama={panorama}
+          identity={identity}
+          ownStatus={ownAttendee?.status ?? null}
+        />
       )}
 
       {/* Tablero (solo lectura para invitados: nadie toca la fila ajena) */}

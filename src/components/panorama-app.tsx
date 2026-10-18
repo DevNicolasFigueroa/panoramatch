@@ -19,6 +19,7 @@ export default function PanoramaApp() {
     lastError,
     activePanorama,
     savedPanoramas,
+    place,
     actions,
     dismissError,
   } = usePanoramaStore(user?.userId ?? null);
@@ -76,6 +77,8 @@ export default function PanoramaApp() {
       ) : (
         <PanoramaDashboard
           panorama={activePanorama}
+          place={place}
+          actions={actions}
           onAddFriend={actions.addFriend}
           onChangeStatus={actions.changeFriendStatus}
           onGoHome={actions.goToNewForm}

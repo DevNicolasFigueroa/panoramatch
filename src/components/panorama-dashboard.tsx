@@ -21,14 +21,22 @@ import QuorumSemaphore from "@/components/quorum-semaphore";
 import AddFriendForm from "@/components/add-friend-form";
 import AttendeeSections from "@/components/attendee-sections";
 import FinancialPanel from "@/components/financial-panel";
+import PlaceVoteSection from "@/components/place-vote-section";
+import type { PanoramaStoreActions, PlaceVoteState } from "@/lib/use-panorama-store";
 
 export default function PanoramaDashboard({
   panorama,
+  place,
+  actions,
   onAddFriend,
   onChangeStatus,
   onGoHome,
 }: {
   panorama: SavedPanorama;
+  /** Tablero de lugares (¿a dónde vamos?); null mientras carga o sin datos. */
+  place: PlaceVoteState | null;
+  /** Acciones completas del store (incluye lugares en Social). */
+  actions: PanoramaStoreActions;
   onAddFriend: (name: string, status: Attendee["status"]) => boolean;
   onChangeStatus: (attendeeId: string, status: Attendee["status"]) => void;
   onGoHome: () => void;
@@ -84,6 +92,11 @@ export default function PanoramaDashboard({
 
       {/* El enlace compartido: los amigos responden sin crear cuenta */}
       <ShareLinkSection panoramaId={panorama.id} />
+
+      {/* Modo Social: votación de lugares (¿a dónde vamos?) */}
+      {event.mode === "social" && (
+        <PlaceVoteSection attendees={attendees} place={place} actions={actions} />
+      )}
 
       {/* Módulo de Confirmación Rápida */}
       <AddFriendForm onAddFriend={onAddFriend} />
