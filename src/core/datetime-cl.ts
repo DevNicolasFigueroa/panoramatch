@@ -40,9 +40,10 @@ export function isValidLocalDatetime(value: string): boolean {
   return LOCAL_DATETIME_PATTERN.test(value) && !Number.isNaN(new Date(value).getTime());
 }
 
-/** Fecha/hora actual en formato 'YYYY-MM-DDTHH:mm', construida con hora local pura. */
-export function getTodayLocalValue(): string {
-  const now = new Date();
+/** Fecha/hora actual en formato 'YYYY-MM-DDTHH:mm', construida con hora local pura.
+ *  El "ahora" entra SIEMPRE como parámetro (constitución, principio 3): la lógica
+ *  pura jamás lee el reloj; la capa de interfaz lo obtiene y lo pasa hacia abajo. */
+export function getTodayLocalValue(now: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }

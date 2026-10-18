@@ -45,6 +45,11 @@ export interface Attendee {
    * Define quién es titular y quién suplente cuando hay cupo máximo.
    */
   confirmedOrder: number | null;
+  /**
+   * true cuando fue anotado a mano por el creador (no llegó por el enlace
+   * ni con cuenta): el creador es quien decide su voto en el modo Social.
+   */
+  creatorAdded?: boolean;
 }
 
 /** Resultado de clasificar la lista de asistentes según el cupo. */
@@ -127,4 +132,9 @@ export interface CreateEventInput {
   startsAt: string;
   maxCapacity: number | null;
   totalCostCLP: number;
+  /**
+   * Solo modo Social: nombres de lugares candidatos (uno por línea,
+   * opcional, máximo definido en place-vote); vacío = creación validísima.
+   */
+  placeCandidates?: string[];
 }

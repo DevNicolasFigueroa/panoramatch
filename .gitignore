@@ -23,5 +23,8 @@ yarn-error.log*
 # tipos incrementales
 *.tsbuildinfo
 
+# compilación pasada de la suite de tests (npm run test)
+.test-build/
+
 # configuración local de OpenCode (agente)
 .opencode/
