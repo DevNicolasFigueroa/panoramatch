@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 
 import type { AttendanceStatus, SavedPanorama } from "@/core/types";
 import { classifyAttendees } from "@/core/quota-manager";
+import { withCreatorAttendee } from "@/core/creator-attendee";
 import {
   getGuestParticipationErrorMessage,
   isPanoramaIdLike,
@@ -85,13 +86,20 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
   }, [panoramaId]);
 
   const flow = resolveGuestFlow(identity, panorama);
-  const classification = useMemo(
+  // Lista efectiva: el organizador es «Voy» implícito y primero.
+  const allAttendees = useMemo(
     () =>
       panorama === null
         ? null
-        : classifyAttendees(panorama.attendees, panorama.event.maxCapacity),
+        : withCreatorAttendee(panorama.attendees, panorama.event.creatorName),
     [panorama],
   );
+  // Tablero con el organizador en «Van»; el quórum sigue midiendo solo
+  // a los invitados (memos de más abajo usan `panorama.attendees` directa).
+  const classification =
+    allAttendees === null || panorama === null
+      ? null
+      : classifyAttendees(allAttendees, panorama.event.maxCapacity);
   const quorum = useMemo(
     () =>
       panorama === null
@@ -119,7 +127,11 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
       if (panorama === null) {
         return;
       }
-      const validation = validateGuestName(panorama.attendees, name);
+      // Lista compuesta: el nombre del organizador también está reservado.
+      const validation = validateGuestName(
+        withCreatorAttendee(panorama.attendees, panorama.event.creatorName),
+        name,
+      );
       if (!validation.ok) {
         setError(getGuestParticipationErrorMessage(validation.error));
         return;
@@ -371,15 +383,18 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
             {classification.titulars.length === 0 ? (
               <p className="text-sm italic text-ink-soft">Nadie ha confirmado todavía.</p>
             ) : (
-              classification.titulars.map((attendee, index) => (
+              classification.titulars.map((attendee) => (
                 <Row
                   key={attendee.id}
                   name={attendee.name}
                   isOwn={identity !== null && attendee.id === identity.participantId}
-                  badge={{
-                    label: index === 0 ? "Titular" : "Dentro",
-                    className: "border-cancha/40 bg-cancha-soft text-cancha",
-                  }}
+                  // En Social no hay "titulares": la fila del organizador es
+                  // la única que lleva chip; los demás van limpios.
+                  badge={
+                    attendee.isCreator === true
+                      ? { label: "Organizador", className: "border-cancha/40 bg-cancha-soft text-cancha" }
+                      : undefined
+                  }
                   statusLabel={statusLabel(attendee.status)}
                 />
               ))
@@ -388,15 +403,11 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
 
           {classification.waitlist.length > 0 && (
             <Group title="En espera" situation="entran si alguien se baja" textClass="text-camino">
-              {classification.waitlist.map((attendee, index) => (
+              {classification.waitlist.map((attendee) => (
                 <Row
                   key={attendee.id}
                   name={attendee.name}
                   isOwn={identity !== null && attendee.id === identity.participantId}
-                  badge={{
-                    label: `Suplente ${index + 1}`,
-                    className: "border-camino/40 bg-camino-soft text-camino",
-                  }}
                   statusLabel={statusLabel(attendee.status)}
                 />
               ))}

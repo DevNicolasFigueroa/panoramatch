@@ -22,7 +22,7 @@ export default function PanoramaApp() {
     place,
     actions,
     dismissError,
-  } = usePanoramaStore(user?.userId ?? null);
+  } = usePanoramaStore(user?.userId ?? null, user?.displayName ?? null);
 
   const isReady = isAuthReady && user !== null && !isLoading;
 

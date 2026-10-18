@@ -45,7 +45,13 @@ export default function AttendeeSections({
             <AttendeeRow
               key={attendee.id}
               attendee={attendee}
-              badge={{ label: "Titular", className: "border-cancha/40 bg-cancha-soft text-cancha" }}
+              // En Social no hay "titulares": la fila del organizador es la
+              // única que lleva chip; los demás van limpios.
+              badge={
+                attendee.isCreator === true
+                  ? { label: "Organizador", className: "border-cancha/40 bg-cancha-soft text-cancha" }
+                  : undefined
+              }
               onChangeStatus={onChangeStatus}
             />
           ))
@@ -59,14 +65,10 @@ export default function AttendeeSections({
           situation="entran si alguien se baja"
           textClass="text-camino"
         >
-          {classification.waitlist.map((attendee, index) => (
+          {classification.waitlist.map((attendee) => (
             <AttendeeRow
               key={attendee.id}
               attendee={attendee}
-              badge={{
-                label: `Suplente ${index + 1}`,
-                className: "border-camino/40 bg-camino-soft text-camino",
-              }}
               onChangeStatus={onChangeStatus}
             />
           ))}
@@ -124,6 +126,8 @@ function AttendeeRow({
   badge?: { label: string; className: string };
   onChangeStatus: (attendeeId: string, status: Attendee["status"]) => void;
 }) {
+  // El organizador es «Voy» implícito: fila informativa, sin botones de estado.
+  const isCreatorRow = attendee.isCreator === true;
   return (
     <li className="rounded-xl border border-ink/15 bg-paper p-2.5">
       <div className="flex items-center justify-between gap-2">
@@ -134,25 +138,27 @@ function AttendeeRow({
           </span>
         )}
       </div>
-      {/* Cambio de estado inline: aquí ocurre el flujo titular ↔ suplente */}
-      <div className="mt-2 grid grid-cols-3 gap-1.5">
-        {STATUS_OPTIONS.map((option) => {
-          const isActive = attendee.status === option.status;
-          return (
-            <button
-              key={option.status}
-              type="button"
-              onClick={() => onChangeStatus(attendee.id, option.status)}
-              aria-pressed={isActive}
-              className={`rounded-lg border px-1.5 py-1.5 text-xs font-bold transition active:scale-[0.97] ${
-                isActive ? option.activeClass : option.inactiveClass
-              } ${isActive ? "" : "bg-transparent"}`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
+      {!isCreatorRow && (
+        <div className="mt-2 grid grid-cols-3 gap-1.5">
+          {/* Cambio de estado inline: aquí ocurre el flujo titular ↔ suplente */}
+          {STATUS_OPTIONS.map((option) => {
+            const isActive = attendee.status === option.status;
+            return (
+              <button
+                key={option.status}
+                type="button"
+                onClick={() => onChangeStatus(attendee.id, option.status)}
+                aria-pressed={isActive}
+                className={`rounded-lg border px-1.5 py-1.5 text-xs font-bold transition active:scale-[0.97] ${
+                  isActive ? option.activeClass : option.inactiveClass
+                } ${isActive ? "" : "bg-transparent"}`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </li>
   );
 }

@@ -50,6 +50,11 @@ export interface Attendee {
    * ni con cuenta): el creador es quien decide su voto en el modo Social.
    */
   creatorAdded?: boolean;
+  /**
+   * true cuando es el asistente virtual del creador: «Voy» fijo, ni delegable
+   * ni con botones de estado. No vive en la base.
+   */
+  isCreator?: boolean;
 }
 
 /** Resultado de clasificar la lista de asistentes según el cupo. */
@@ -75,6 +80,11 @@ export interface PanoramaEvent {
   maxCapacity: number | null;
   /** Costo total estimado o fijo en CLP (entero). */
   totalCostCLP: number;
+  /**
+   * Nombre de Google del creador, guardado al crear. `null`/ausente en
+   * panoramas antiguos: la UI muestra la etiqueta «El creador».
+   */
+  creatorName?: string | null;
 }
 
 /** Semáforo de quórum del panorama. */
@@ -137,4 +147,9 @@ export interface CreateEventInput {
    * opcional, máximo definido en place-vote); vacío = creación validísima.
    */
   placeCandidates?: string[];
+  /**
+   * Nombre de Google del creador de la sesión: se persiste para que panel,
+   * enlace y tarjetas lo muestren. El store lo agrega, no el form.
+   */
+  creatorName?: string | null;
 }

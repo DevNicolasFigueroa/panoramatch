@@ -178,6 +178,7 @@ export function getMissingToQuorum(
 
 /** Crea el evento desde los datos ya validados del formulario. */
 export function createPanoramaEvent(eventId: string, input: import("./types").CreateEventInput): PanoramaEvent {
+  const creatorName = input.creatorName === undefined ? null : input.creatorName;
   return {
     id: eventId,
     title: input.title.trim().replace(/\s+/g, " "),
@@ -185,5 +186,6 @@ export function createPanoramaEvent(eventId: string, input: import("./types").Cr
     startsAt: input.startsAt,
     maxCapacity: input.maxCapacity,
     totalCostCLP: input.totalCostCLP,
+    creatorName,
   };
 }

@@ -25,6 +25,7 @@ import {
 } from "./quota-manager";
 import { formatCLP } from "./currency-clp";
 import { formatPanoramaStartsAt } from "./datetime-cl";
+import { withCreatorAttendee } from "./creator-attendee";
 
 /** Normaliza títulos igual que los nombres: trims y espacios colapsados. */
 export function normalizePanoramaTitle(title: string): string {
@@ -112,9 +113,13 @@ export function sortSavedPanoramas(
 /** Resumen derivado para la tarjeta: quórum, cupo y costo, en formato CLP. */
 export function buildSavedSummary(saved: SavedPanorama): SavedPanoramaSummary {
   const { event, attendees } = saved;
-  const titularCount = classifyAttendees(attendees, event.maxCapacity).titulars.length;
-  const quorum = getQuorumStatus(event.maxCapacity, titularCount);
-  const missingCount = getMissingToQuorum(event.maxCapacity, titularCount);
+  // «Van» incluye al organizador (es «Voy» implícito); el quórum del
+  // semáforo sigue midiendo solo a los invitados.
+  const compositeAttendees = withCreatorAttendee(attendees, event.creatorName);
+  const titularCount = classifyAttendees(compositeAttendees, event.maxCapacity).titulars.length;
+  const guestsTitularCount = classifyAttendees(attendees, event.maxCapacity).titulars.length;
+  const quorum = getQuorumStatus(event.maxCapacity, guestsTitularCount);
+  const missingCount = getMissingToQuorum(event.maxCapacity, guestsTitularCount);
   return {
     id: saved.id,
     title: event.title,

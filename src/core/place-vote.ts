@@ -211,6 +211,8 @@ export function isParticipantVoter(attendee: Attendee | undefined): boolean {
 export function isDelegableAttendee(attendee: Attendee | undefined): boolean {
   return (
     attendee !== undefined &&
+    // El asistente creador ya tiene su propio voto — jamás delegable.
+    attendee.isCreator !== true &&
     attendee.creatorAdded === true &&
     isParticipantVoter(attendee)
   );

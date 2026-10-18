@@ -16,6 +16,7 @@ import {
   getQuorumStatus,
 } from "@/core/quota-manager";
 import { splitCost } from "@/core/currency-clp";
+import { withCreatorAttendee } from "@/core/creator-attendee";
 import { MODE_EMOJI, MODE_STYLES } from "@/components/ui-theme";
 import QuorumSemaphore from "@/components/quorum-semaphore";
 import AddFriendForm from "@/components/add-friend-form";
@@ -43,18 +44,28 @@ export default function PanoramaDashboard({
 }) {
   const { event, attendees } = panorama;
 
-  // Derivados puros: clasificación de asistentes y reparto del costo.
+  // Lista efectiva: el organizador es «Voy» implícito y primero.
+  const allAttendees = useMemo(
+    () => withCreatorAttendee(attendees, event.creatorName),
+    [attendees, event.creatorName],
+  );
+  // Tablero con el creador dentro (boleta y «Van»); el quórum del semáforo
+  // sigue midiendo solo a los invitados (un panorama no nace en verde).
   const classification = useMemo(
-    () => classifyAttendees(attendees, event.maxCapacity),
+    () => classifyAttendees(allAttendees, event.maxCapacity),
+    [allAttendees, event.maxCapacity],
+  );
+  const guestsTitularCount = useMemo(
+    () => classifyAttendees(attendees, event.maxCapacity).titulars.length,
     [attendees, event.maxCapacity],
   );
   const quorum = useMemo(
-    () => getQuorumStatus(event.maxCapacity, classification.titulars.length),
-    [event.maxCapacity, classification.titulars.length],
+    () => getQuorumStatus(event.maxCapacity, guestsTitularCount),
+    [event.maxCapacity, guestsTitularCount],
   );
   const missingCount = useMemo(
-    () => getMissingToQuorum(event.maxCapacity, classification.titulars.length),
-    [event.maxCapacity, classification.titulars.length],
+    () => getMissingToQuorum(event.maxCapacity, guestsTitularCount),
+    [event.maxCapacity, guestsTitularCount],
   );
   const split = useMemo(
     () => splitCost(event.totalCostCLP, classification.titulars.length),

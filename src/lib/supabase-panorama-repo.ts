@@ -24,6 +24,8 @@ export interface PanoramaRow {
   starts_at: string;
   max_capacity: number | null;
   total_cost_clp: number;
+  /** Nombre de Google del creador; null en panoramas antiguos. */
+  creator_name: string | null;
   created_at: string;
 }
 
@@ -74,6 +76,7 @@ export function mapRowsToSavedPanorama(
     startsAt: panorama.starts_at,
     maxCapacity: panorama.max_capacity,
     totalCostCLP: panorama.total_cost_clp,
+    creatorName: panorama.creator_name ?? null,
   };
   return {
     id: panorama.id,
@@ -145,6 +148,7 @@ export async function insertPanoramaRow(
       starts_at: saved.event.startsAt,
       max_capacity: saved.event.maxCapacity,
       total_cost_clp: saved.event.totalCostCLP,
+      creator_name: saved.event.creatorName ?? null,
     })
     .select()
     .single();

@@ -29,6 +29,7 @@ import {
   isDuplicateAttendeeName,
   setAttendeeStatus,
 } from "@/core/quota-manager";
+import { withCreatorAttendee } from "@/core/creator-attendee";
 import {
   MAX_PLACE_CANDIDATES,
   addPlaceCandidate as addCorePlaceCandidate,
@@ -144,7 +145,11 @@ function dedupePlaceCandidates(rawNames: string[]): string[] {
   return names;
 }
 
-export function usePanoramaStore(userId: string | null): PanoramaStore {
+export function usePanoramaStore(
+  userId: string | null,
+  /** Nombre de Google del creador, para persistirlo al crear. */
+  creatorDisplayName: string | null = null,
+): PanoramaStore {
   const [state, setState] = useState<PanoramaStoreState>(EMPTY_PANORAMA_STORE);
   const [isLoading, setIsLoading] = useState(true);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -227,7 +232,9 @@ export function usePanoramaStore(userId: string | null): PanoramaStore {
         return false;
       }
       const panoramaId = newUuid();
-      const saved = createSavedPanorama(createPanoramaEvent(panoramaId, input));
+      const saved = createSavedPanorama(
+        createPanoramaEvent(panoramaId, { ...input, creatorName: creatorDisplayName }),
+      );
       setState((current) => ({
         panoramas: upsertPanorama(current.panoramas, saved),
         activeId: saved.id,
@@ -250,7 +257,7 @@ export function usePanoramaStore(userId: string | null): PanoramaStore {
         });
       return true;
     },
-    [state.panoramas, userId],
+    [state.panoramas, userId, creatorDisplayName],
   );
 
   /** Inserta en la nube los candidatos iniciales y muestra el tablero local. */
@@ -279,7 +286,11 @@ export function usePanoramaStore(userId: string | null): PanoramaStore {
   const addFriend = useCallback(
     (name: string, status: AttendanceStatus = "maybe"): boolean => {
       const active = getActivePanorama(state);
-      if (active === null || isDuplicateAttendeeName(active.attendees, name)) {
+      if (active === null) {
+        return false;
+      }
+      // Lista compuesta: el nombre del organizador también está reservado.
+      if (isDuplicateAttendeeName(withCreatorAttendee(active.attendees, active.event.creatorName), name)) {
         return false;
       }
       // Optimista: id nuevo del cliente; la base devuelve el orden canónico.
