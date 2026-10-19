@@ -14,6 +14,7 @@ import type {
   SavedPanorama,
 } from "@/core/types";
 import type { PlaceCandidate, PlaceVoteRecord } from "@/core/place-vote";
+import type { ContributionItem } from "@/core/contribution-list";
 
 /** Filas de `public.panoramas`. */
 export interface PanoramaRow {
@@ -393,4 +394,103 @@ export async function declareMatchRow(
     throw new Error(error.message);
   }
   return (data as { match_candidate_id: string | null } | null)?.match_candidate_id ?? null;
+}
+
+/* ─────────────── Lista de aportes (checklist, spec 002) ─────────────── */
+
+/** Filas de `public.checklist_items`. */
+export interface ChecklistItemRow {
+  id: string;
+  panorama_id: string;
+  name: string;
+  /** 'creator' o el id del participante que lo lleva; null = libre. */
+  claimed_by_ref: string | null;
+  created_at: string;
+}
+
+function mapChecklistRow(row: ChecklistItemRow): ContributionItem {
+  return { id: row.id, name: row.name, claimedByRef: row.claimed_by_ref };
+}
+
+/** Lee la lista de aportes del panorama (en orden de creación). */
+export async function fetchChecklistItems(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<ContributionItem[]> {
+  const { data, error } = await client
+    .from("checklist_items")
+    .select("*")
+    .eq("panorama_id", panoramaId)
+    .order("created_at", { ascending: true });
+
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  return ((data ?? []) as ChecklistItemRow[]).map(mapChecklistRow);
+}
+
+/**
+ * Inserta un ítem nuevo. Con `itemId` se usa el id generado por el cliente
+ * (flujo optimista del creador); sin él, lo genera la base (invitado).
+ */
+export async function insertChecklistItemRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; name: string; itemId?: string },
+): Promise<ChecklistItemRow> {
+  const { data, error } = await client
+    .from("checklist_items")
+    .insert({
+      ...(payload.itemId !== undefined ? { id: payload.itemId } : {}),
+      panorama_id: payload.panoramaId,
+      name: payload.name,
+    })
+    .select()
+    .single();
+
+  return assertData(data, error) as ChecklistItemRow;
+}
+
+/** Elimina un ítem libre (solo creador; la base valida la sesión y el estado). */
+export async function deleteChecklistItemRow(
+  client: SupabaseClient,
+  itemId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("checklist_items")
+    .delete()
+    .eq("id", itemId);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Toma un ítem libre: rellena el responsable («Yo lo llevo»). */
+export async function claimChecklistItemRow(
+  client: SupabaseClient,
+  payload: { itemId: string; claimedByRef: string | "creator" },
+): Promise<ChecklistItemRow> {
+  const { data, error } = await client
+    .from("checklist_items")
+    .update({ claimed_by_ref: payload.claimedByRef })
+    .eq("id", payload.itemId)
+    .select()
+    .single();
+
+  return assertData(data, error) as ChecklistItemRow;
+}
+
+/** Libera el ítem propio: vacía el responsable (solo quien lo lleva). */
+export async function releaseChecklistItemRow(
+  client: SupabaseClient,
+  itemId: string,
+  claimedByRef: string | "creator",
+): Promise<void> {
+  const { error } = await client
+    .from("checklist_items")
+    .update({ claimed_by_ref: null })
+    .eq("id", itemId)
+    .eq("claimed_by_ref", claimedByRef);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
 }

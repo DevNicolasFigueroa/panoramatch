@@ -4,13 +4,13 @@ Orden secuencial; cada tarea es un paso alcanzable y verificable.
 
 ## Fase 1 — Lógica pura (con tests primero)
 
-- [ ] T1 — Módulo puro del checklist en `src/core/`: tipos + reglas — ítems (texto normalizado, máx. 10, duplicados bloqueados), autorización de reclamo (creador + «Voy» dentro del cupo; espera y espectadores nunca), tomar solo ítems libres (un responsable por ítem), liberar solo el propio, una persona con varios ítems, bloqueo de eliminación con responsable (solo creador elimina libres), liberación automática al dejar de ser «Voy», orden libres primero + luego tomados (creación dentro de cada grupo) y progreso «X de Y» (sin «0 de 0»).
-- [ ] T2 — Tests del módulo: cada regla anterior con su caso (incluye creador «Voy» permanente, invitado del enlace sin cuenta, anotado a mano sin identidad no reclama, liberación encadenada) — puerta `npm run test` verde antes de seguir.
+- [x] T1 — Módulo puro del checklist en `src/core/`: tipos + reglas — ítems (texto normalizado, máx. 10, duplicados bloqueados), autorización de reclamo (creador + «Voy» dentro del cupo; espera y espectadores nunca), tomar solo ítems libres (un responsable por ítem), liberar solo el propio, una persona con varios ítems, bloqueo de eliminación con responsable (solo creador elimina libres), liberación automática al dejar de ser «Voy», orden libres primero + luego tomados (creación dentro de cada grupo) y progreso «X de Y» (sin «0 de 0»).
+- [x] T2 — Tests del módulo: 18 casos de las reglas (autorización con cupo, reclamo/liberación, dropClaims encadenado, orden con libres primero y progreso). **Verde: 42/42.**
 
 ## Fase 2 — Persistencia (migración + RLS + repo)
 
-- [ ] T3 — Migración vía MCP: tabla nueva de ítems por panorama (referencia al panorama con cascada, texto, orden de creación y responsable nullable como referencia: `"creator"` o id de participante; índice por panorama para el listado).
-- [ ] T4 — RLS + privilegios: lectura pública de la lista; creador añade/elimina ítems de su panorama; invitado «Voy» añade ítems y toca SOLO la columna de su propio reclamo (tomar ítem libre con su header, liberar el que él lleva); espectadores sin escritura. Pruebas REST empíricas antes de conectar la interfaz (mismo método de la 001; fixtures eliminadas al final).
+- [x] T3 — Migración vía MCP: `create_checklist_items` — tabla con cascada al panorama, texto, `claimed_by_ref` nullable (`'creator'` o id de participante) e índice por panorama + fecha de creación.
+- [x] T4 — RLS + privilegios: `checklist_item_rls` (lectura pública; creador inserta/actualiza lo suyo y borra SOLO ítems libres; invitado inserta items libres y toca SOLO su reclamo con el secreto en header; nadie más escribe) + `checklist_item_privileges_fix` (revoca grants generales de tabla que anulaban el grant por columna). **13 pruebas REST en verde**: insert libre ✓ · insert con reclamo prefabricado ✗ · not_going/maybe ✗ · claim propio ✓ · tomar ítem ajeno ✗ · tocar columnas sin privilegio ✗ · DELETE del invitado ✗ · secreto equivocado ✗ · reclamar como 'creator' ✗ · liberar tras dejar de ir ✓ · re-tomar sin ir ✗ · lectura pública con apikey ✓ · cascada al borrar panorama 0 filas ✓. Fixtures eliminadas (0/0).
 - [ ] T5 — Repositorio: fetch de la lista del panorama, insertar ítem, eliminar ítem libre, tomar ítem (rellenar responsable), liberar ítem (vaciar); mapeo hacia el dominio core con la identidad del reclamante.
 
 ## Fase 3 — Orquestación e interfaz
