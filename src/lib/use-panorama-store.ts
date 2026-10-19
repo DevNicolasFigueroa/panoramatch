@@ -63,6 +63,7 @@ import {
   deletePlaceCandidateRow,
   deletePlaceVoteRow,
   fetchChecklistItems,
+  ensureOwnProfileRow,
   fetchCreatorPanoramas,
   fetchPlaceData,
   declareMatchRow,
@@ -220,6 +221,15 @@ export function usePanoramaStore(
     setIsLoading(true);
     const run = async () => {
       try {
+        // Auto-reparación: si el trigger `on_auth_user_created` no logró crear
+        // el perfil (carrera/limpieza de usuarios), el primer guardado de un
+        // panorama moriría en el FK `panoramas_creator_id_fkey`. La política
+        // `profiles_insert_own` permite al cliente crear su fila aquí.
+        await ensureOwnProfileRow(
+          getSupabaseBrowserClient(),
+          userId,
+          creatorDisplayName ?? undefined,
+        );
         const panoramas = await fetchCreatorPanoramas(
           getSupabaseBrowserClient(),
           userId,
@@ -348,8 +358,7 @@ export function usePanoramaStore(
         });
       return true;
     },
-    [state.panoramas, userId, creatorDisplayName],
-  );
+    [state.panoramas, userId, creatorDisplayName],  );
 
   /** Inserta en la nube los candidatos iniciales y muestra el tablero local. */
   const seedPlaceCandidates = useCallback((panoramaId: string, names: string[]) => {

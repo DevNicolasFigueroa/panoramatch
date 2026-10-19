@@ -4,8 +4,9 @@ import GuestParticipationView from "@/components/guest-participation-view";
 import { isPanoramaIdLike } from "@/core/guest-participation";
 
 /**
- * Vista del enlace compartido (Requisito 3): el invitado externo responde
- * Voy / En duda / No puedo sin crear cuenta ni iniciar sesión.
+ * Vista del enlace compartido (Requisito 3): el participante tiene sesión
+ * (Google o correo; el middleware protege /p/*) y responde Voy / En duda /
+ * No puedo con su cuenta.
  */
 export default async function ParticipantPanoramaPage({
   params,

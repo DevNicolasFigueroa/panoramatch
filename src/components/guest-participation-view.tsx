@@ -1,12 +1,15 @@
 "use client";
 
 /**
- * Vista pública del panorama para invitados externos, sin cuenta.
- * Cargan el tablero con "leer" (RLS pública) y su voto es la única
- * escritura permitida: otra persona jamás puede cambiar su fila porque la
- * DB valida el secreto de participante en el header del cliente.
+ * Vista del panorama compartido con AUTH UNIVERSAL: quien abre el enlace
+ * necesita sesión (Google o correo) y su nombre sale del perfil, no se
+ * escribe a mano. La fila `participants` queda ligada a su `auth_user_id`
+ * y solo él puede tocarla (RLS la valida con `auth.uid()`).
  *
- * Lenguaje puro en `core/guest-participation.ts`; aquí solo orquestación.
+ * Las filas anónimas de la era sin cuenta (con `guest_secret`) se ADOPTAN
+ * con la función segura `adopt_anonymous_participant` cuando la identidad
+ * guardada de este dispositivo (`guest-identity.ts`) corresponde a una de
+ * ellas: la respuesta anterior se recupera con la nueva cuenta.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -17,6 +20,7 @@ import { classifyAttendees } from "@/core/quota-manager";
 import { withCreatorAttendee } from "@/core/creator-attendee";
 import {
   getGuestParticipationErrorMessage,
+  getOwnAttendeeByUserId,
   isPanoramaIdLike,
   resolveGuestFlow,
   validateGuestName,
@@ -24,13 +28,14 @@ import {
 } from "@/core/guest-participation";
 import { formatPanoramaStartsAt } from "@/core/datetime-cl";
 import { getQuorumLabel, getQuorumStatus, getMissingToQuorum } from "@/core/quota-manager";
-import { createGuestSupabaseClient, getSupabaseBrowserClient } from "@/lib/supabase-client";
-import { getGuestIdentity, saveGuestIdentity } from "@/lib/guest-identity";
+import { getSupabaseBrowserClient } from "@/lib/supabase-client";
+import { getGuestIdentity, clearGuestIdentity } from "@/lib/guest-identity";
+import { useAuthSession } from "@/lib/use-auth-session";
 import {
   fetchPanoramaById,
   insertParticipantRow,
-  updateParticipantStatus,
   mapParticipantRowToAttendee,
+  updateParticipantStatus,
 } from "@/lib/supabase-panorama-repo";
 import ThemeToggle from "@/components/theme-toggle";
 import QuorumSemaphore from "@/components/quorum-semaphore";
@@ -45,6 +50,15 @@ const SPLASH = (
   </div>
 );
 
+const NEED_LOGIN = (
+  <div className="mt-16 rounded-2xl border border-ink/15 bg-elev p-6 text-center">
+    <h2 className="font-display text-xl font-bold text-ink">Inicia sesión para responder</h2>
+    <p className="mt-2 text-sm text-ink-soft">
+      Este panorama ahora pide sesión (Google o correo) para participar.
+    </p>
+  </div>
+);
+
 const MISSING = (
   <div className="mt-16 rounded-2xl border border-ink/15 bg-elev p-6 text-center">
     <h2 className="font-display text-xl font-bold text-ink">Panorama no disponible</h2>
@@ -56,21 +70,27 @@ const MISSING = (
 
 export default function GuestParticipationView({ panoramaId }: { panoramaId: string }) {
   const router = useRouter();
+  const { user, isAuthReady } = useAuthSession();
   const [panorama, setPanorama] = useState<SavedPanorama | null>(null);
   const [isInvalid, setIsInvalid] = useState(false);
   const [failedToLoad, setFailedToLoad] = useState(false);
   const [identity, setIdentity] = useState<GuestIdentity | null>(null);
-  const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isAdopting, setIsAdopting] = useState(false);
+
+  const canLoad = isAuthReady && user !== null;
 
   useEffect(() => {
     if (!isPanoramaIdLike(panoramaId)) {
       setIsInvalid(true);
       return;
     }
+    if (!canLoad) {
+      return;
+    }
     setIdentity(getGuestIdentity(panoramaId));
-    const client = createGuestSupabaseClient();
+    const client = getSupabaseBrowserClient();
     const run = async () => {
       try {
         const loaded = await fetchPanoramaById(client, panoramaId);
@@ -84,9 +104,15 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
       }
     };
     void run();
-  }, [panoramaId]);
+  }, [panoramaId, canLoad]);
 
-  const flow = resolveGuestFlow(identity, panorama);
+  const flow = resolveGuestFlow(identity, panorama, user?.userId ?? null);
+  // El asistente propio: la fila ligada a la cuenta de la sesión.
+  const ownAttendee =
+    user === null || panorama === null
+      ? null
+      : getOwnAttendeeByUserId(panorama, user.userId);
+
   // Lista efectiva: el organizador es «Voy» implícito y primero.
   const allAttendees = useMemo(
     () =>
@@ -122,16 +148,16 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     [panorama],
   );
 
-  /** El invitado entra a la lista con el estado elegido. */
+  /** El usuario entra a la lista con el estado elegido y SU cuenta. */
   const joinAs = useCallback(
     async (status: AttendanceStatus) => {
-      if (panorama === null) {
+      if (panorama === null || user === null) {
         return;
       }
-      // Lista compuesta: el nombre del organizador también está reservado.
+      // El nombre viene del perfil; el choque de duplicados se valida igual.
       const validation = validateGuestName(
         withCreatorAttendee(panorama.attendees, panorama.event.creatorName),
-        name,
+        user.displayName,
       );
       if (!validation.ok) {
         setError(getGuestParticipationErrorMessage(validation.error));
@@ -140,50 +166,67 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
       setIsBusy(true);
       setError(null);
       try {
-        const guestSecret =
-          typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-            ? crypto.randomUUID()
-            : `${Date.now().toString(16).padEnd(32, "0").slice(0, 32)}`;
-        const row = await insertParticipantRow(createGuestSupabaseClient(guestSecret), {
+        const row = await insertParticipantRow(getSupabaseBrowserClient(), {
           panoramaId,
           name: validation.name,
           status,
-          guestSecret,
+          authUserId: user.userId,
         });
-        const attendee = mapParticipantRowToAttendee(row);
-        const nextIdentity: GuestIdentity = {
-          panoramaId,
-          participantId: attendee.id,
-          name: attendee.name,
-          guestSecret,
-        };
-        saveGuestIdentity(nextIdentity);
-        setIdentity(nextIdentity);
         setPanorama((current) =>
-          current === null ? current : { ...current, attendees: [...current.attendees, attendee] },
+          current === null
+            ? current
+            : { ...current, attendees: [...current.attendees, mapParticipantRowToAttendee(row)] },
         );
       } catch {
-        setError(getGuestParticipationErrorMessage("duplicate_name"));
+        setError("No se pudo guardar tu respuesta. Intenta otra vez.");
       } finally {
         setIsBusy(false);
       }
     },
-    [name, panorama, panoramaId],
+    [panorama, user, panoramaId],
   );
 
-  /** Cambia SOLO el voto del propio invitado (la DB valida el secreto). */
+  /** Adopta la fila anónima legacy de este dispositivo con la sesión actual. */
+  const adoptLegacyRow = useCallback(async () => {
+    if (identity === null || panorama === null || user === null) {
+      return;
+    }
+    setIsAdopting(true);
+    setError(null);
+    try {
+      const { data, error: rpcError } = await getSupabaseBrowserClient()
+        .rpc("adopt_anonymous_participant", {
+          p_panorama_id: panorama.id,
+          p_guest_secret: identity.guestSecret,
+        });
+      if (rpcError !== null) {
+        throw new Error(rpcError.message);
+      }
+      if (data !== null) {
+        clearGuestIdentity(panoramaId);
+      }
+      setIdentity(null);
+      const refreshed = await fetchPanoramaById(getSupabaseBrowserClient(), panoramaId);
+      if (refreshed !== null) {
+        setPanorama(refreshed);
+      }
+    } catch {
+      setError("No se pudo recuperar tu respuesta anterior. Intenta otra vez.");
+    } finally {
+      setIsAdopting(false);
+    }
+  }, [identity, panorama, user, panoramaId]);
+
+  /** Cambia SOLO el voto del propio asistente (RLS: auth_user_id = sesión). */
   const changeMyVote = useCallback(
     async (status: AttendanceStatus) => {
-      if (identity === null || panorama === null) {
+      if (ownAttendee === null || panorama === null) {
+        return;
+      }
+      if (ownAttendee.status === status) {
         return;
       }
       const previousPanorama = panorama;
-      const previousAttendee = panorama.attendees.find(
-        (attendee) => attendee.id === identity.participantId,
-      );
-      if (previousAttendee === undefined || previousAttendee.status === status) {
-        return;
-      }
       setIsBusy(true);
       setPanorama((current) =>
         current === null
@@ -191,14 +234,14 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
           : {
               ...current,
               attendees: current.attendees.map((attendee) =>
-                attendee.id === identity.participantId ? { ...attendee, status } : attendee,
+                attendee.id === ownAttendee.id ? { ...attendee, status } : attendee,
               ),
             },
       );
       try {
         const row = await updateParticipantStatus(
-          createGuestSupabaseClient(identity.guestSecret),
-          identity.participantId,
+          getSupabaseBrowserClient(),
+          ownAttendee.id,
           status,
         );
         setPanorama((current) =>
@@ -218,23 +261,23 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
         setIsBusy(false);
       }
     },
-    [identity, panorama],
+    [ownAttendee, panorama],
   );
 
   if (isInvalid) {
     return MISSING;
   }
   if (panorama === null) {
-    return failedToLoad ? MISSING : SPLASH;
+    if (!isAuthReady) {
+      return SPLASH;
+    }
+    return failedToLoad ? MISSING : user === null ? NEED_LOGIN : SPLASH;
   }
 
   const { event } = panorama;
   const modeStyle = MODE_STYLES[event.mode];
   const quorumLabel = quorum === null ? null : getQuorumLabel(quorum, missingCount);
-  const ownAttendee =
-    identity === null
-      ? null
-      : panorama.attendees.find((attendee) => attendee.id === identity.participantId) ?? null;
+  const isOwn = (attendeeId: string) => attendeeId === ownAttendee?.id;
 
   return (
     <div className="flex flex-col gap-4">
@@ -268,53 +311,29 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
         )}
       </section>
 
-      {/* Bienvenida / formulario de voto sin cuenta */}
-      {flow === "fresh" || flow === "stale" ? (
+      {/* Bienvenida: participa con tu cuenta; el nombre viene del perfil */}
+      {flow === "fresh" && ownAttendee === null ? (
         <section className="rounded-2xl border border-ink/15 bg-elev p-4">
           <h2 className="font-display text-lg font-bold tracking-tight text-ink">
             ¿Vas o no vas?
           </h2>
           <p className="mt-0.5 text-sm text-ink-soft">
-            Escribe tu nombre y responde; no necesitas crear cuenta.
+            Participas con tu cuenta como{" "}
+            <span className="font-bold text-ink">{user?.displayName}</span>.
           </p>
-          {flow === "stale" && (
-            <p className="mt-2 text-xs font-semibold text-wait">
-              Ya no participas con el nombre guardado en este navegador. Anótate otra vez.
-            </p>
-          )}
-          <form
-            onSubmit={(formEvent) => {
-              formEvent.preventDefault();
-              void joinAs("maybe");
-            }}
-            noValidate
-            className="mt-3 flex flex-col gap-2.5"
-          >
-            <input
-              type="text"
-              value={name}
-              onChange={(inputEvent) => {
-                setName(inputEvent.target.value);
-                setError(null);
-              }}
-              placeholder="Tu nombre"
-              maxLength={40}
-              className="w-full rounded-xl border border-ink/20 bg-paper px-3.5 py-2.5 text-base text-ink outline-none transition focus:border-cancha"
-            />
-            <div className="grid grid-cols-3 gap-2">
-              {STATUS_OPTIONS.map((option) => (
-                <button
-                  key={option.status}
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => void joinAs(option.status)}
-                  className={`rounded-xl border px-2 py-2 text-sm font-bold transition active:scale-[0.97] disabled:opacity-60 ${option.inactiveClass}`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </form>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {STATUS_OPTIONS.map((option) => (
+              <button
+                key={option.status}
+                type="button"
+                disabled={isBusy}
+                onClick={() => void joinAs(option.status)}
+                className={`rounded-xl border px-2 py-2 text-sm font-bold transition active:scale-[0.97] disabled:opacity-60 ${option.inactiveClass}`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           {error !== null && (
             <p className="mt-2 text-xs font-semibold text-baja" role="alert">
               {error}
@@ -323,8 +342,34 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
         </section>
       ) : null}
 
-      {/* Mi respuesta (cuando ya participo) */}
-      {flow === "linked" && ownAttendee !== null && (
+      {/* Adopción: la fila anónima legacy de este dispositivo puede ser tuya */}
+      {flow === "adoptable" && identity !== null ? (
+        <section className="rounded-2xl border border-wait/40 bg-elev p-4">
+          <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+            Ya habías respondido como {identity.name}
+          </h2>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            En este navegador queda tu respuesta anterior (anónima). Recupérala
+            con tu cuenta: sigue siendo tu fila y tus ítems.
+          </p>
+          <button
+            type="button"
+            disabled={isAdopting}
+            onClick={() => void adoptLegacyRow()}
+            className="mt-3 w-full rounded-xl border border-cancha bg-cancha px-4 py-2.5 text-sm font-bold text-elev transition active:scale-[0.99] disabled:opacity-60"
+          >
+            {isAdopting ? "Recuperando…" : "Recuperar con mi cuenta"}
+          </button>
+          {error !== null && (
+            <p className="mt-2 text-xs font-semibold text-baja" role="alert">
+              {error}
+            </p>
+          )}
+        </section>
+      ) : null}
+
+      {/* Mi respuesta (cuando ya participo con la cuenta) */}
+      {ownAttendee !== null && (
         <section className="rounded-2xl border border-cancha/40 bg-cancha-soft p-4">
           <h2 className="font-display text-lg font-bold tracking-tight text-ink">
             Participas como {ownAttendee.name}
@@ -351,7 +396,7 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
               );
             })}
           </div>
-          {error !== null && (
+          {ownAttendee !== null && error !== null && (
             <p className="mt-2 text-xs font-semibold text-baja" role="alert">
               {error}
             </p>
@@ -363,17 +408,17 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
       {event.mode === "social" && (
         <GuestPlaceVote
           panorama={panorama}
-          identity={identity}
+          ownParticipantId={ownAttendee?.id ?? null}
           ownStatus={ownAttendee?.status ?? null}
         />
       )}
 
       {/* ¿Qué hay que llevar? (modo Colaborativo): lista pública con nombres;
-          solo "Voy" dentro del cupo añade, toma o libera con su secreto */}
+          solo "Voy" dentro del cupo añade, toma o libera con su cuenta */}
       {event.mode === "colaborativo" && (
         <GuestContributionList
           panorama={panorama}
-          identity={identity}
+          ownParticipantId={ownAttendee?.id ?? null}
           ownStatus={ownAttendee?.status ?? null}
         />
       )}
@@ -398,7 +443,7 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
                 <Row
                   key={attendee.id}
                   name={attendee.name}
-                  isOwn={identity !== null && attendee.id === identity.participantId}
+                  isOwn={isOwn(attendee.id)}
                   // En Social no hay "titulares": la fila del organizador es
                   // la única que lleva chip; los demás van limpios.
                   badge={
@@ -418,7 +463,7 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
                 <Row
                   key={attendee.id}
                   name={attendee.name}
-                  isOwn={identity !== null && attendee.id === identity.participantId}
+                  isOwn={isOwn(attendee.id)}
                   statusLabel={statusLabel(attendee.status)}
                 />
               ))}
@@ -431,7 +476,7 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
                 <Row
                   key={attendee.id}
                   name={attendee.name}
-                  isOwn={identity !== null && attendee.id === identity.participantId}
+                  isOwn={isOwn(attendee.id)}
                   statusLabel={statusLabel(attendee.status)}
                 />
               ))}
@@ -444,7 +489,7 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
                 <Row
                   key={attendee.id}
                   name={attendee.name}
-                  isOwn={identity !== null && attendee.id === identity.participantId}
+                  isOwn={isOwn(attendee.id)}
                   statusLabel={statusLabel(attendee.status)}
                 />
               ))}

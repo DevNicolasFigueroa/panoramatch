@@ -51,6 +51,12 @@ export interface Attendee {
    */
   creatorAdded?: boolean;
   /**
+   * Cuenta autenticada de la fila `participants` (auth_user_id): presente
+   * cuando el asistente participa con sesión (creador o invitado con cuenta);
+   * null en los anotados a mano y en fila legacy anónima sin adoptar.
+   */
+  authUserId?: string | null;
+  /**
    * true cuando es el asistente virtual del creador: «Voy» fijo, ni delegable
    * ni con botones de estado. No vive en la base.
    */

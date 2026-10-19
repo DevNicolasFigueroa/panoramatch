@@ -1,10 +1,15 @@
 /**
- * Reglas de participación para invitados externos (enlace compartido).
+ * Reglas de participación en un panorama compartido (con sesión obligatoria).
  *
- * Producto: el invitado no crea cuenta. Abre el enlace `/p/<panorama_id>`,
- * escribe su nombre y marca Voy / En duda / No puedo. Su identidad en el
- * dispositivo vive en localStorage (`guest-identity.ts`); la base de datos
- * solo lo vincula mientras se envíe su secreto en el header.
+ * Producto: quien abre el enlace `/p/<panorama_id>` DEBE tener sesión
+ * (Google o correo). Al confirmar asistencia se vincula con su cuota:
+ * la fila `participants` lleva su `auth_user_id`; el nombre ya no se escribe
+ * a mano, viene del perfil de la sesión.
+ *
+ * Compatibilidad: los invitados anónimos de la era anterior tienen fila con
+ * `guest_secret` y SIN `auth_user_id`. Si vuelven con cuenta desde el mismo
+ * dispositivo (identidad guardada en `localStorage`), pueden ADOPTAR su fila
+ * vieja vía función segura de la base (secret de por medio).
  *
  * Este módulo es puro: sin React, sin DOM, sin red y sin Supabase.
  */
@@ -53,9 +58,9 @@ export function getGuestParticipationErrorMessage(error: GuestParticipationError
 }
 
 /**
- * Valida el nombre con el que un invitado quiere entrar a un panorama ya
- * cargado: igual que el creador, reutiliza las reglas de duplicado sin
- * mayúsculas ni espacios de sobra (`core/quota-manager.ts`).
+ * Valida el nombre con el que un participante entra a un panorama: el nombre
+ * viene fijo del perfil de la sesión, pero el choque de duplicados se valida
+ * igual (sin mayúsculas ni espacios de sobra, `core/quota-manager.ts`).
  */
 export function validateGuestName(
   attendees: readonly Attendee[],
@@ -79,49 +84,70 @@ export function isGuestStatusValue(status: string): status is AttendanceStatus {
   return status === "going" || status === "maybe" || status === "not_going";
 }
 
-/** Origen de la identidad guardada del dispositivo para este panorama. */
+/** Origen de la identidad LEGACY guardada en este dispositivo para un panorama. */
 export type GuestIdentity = {
   panoramaId: string;
-  /** id de la fila `participants` que el propio invitado creó. */
+  /** id de la fila `participants` que el propio invitado creó (era anónima). */
   participantId: string;
   /** Nombre guardado para mostrarlo sin volver a pedirlo. */
   name: string;
-  /** Secreto correspondiente a `participantId` (header del cliente). */
+  /** Secreto correspondiente a `participantId` (adopción de fila legacy). */
   guestSecret: string;
 };
 
-/** Estados del flujo de invitado según la identidad guardada y la lista viva. */
+/** Estados del flujo de participación según la sesión y la lista viva. */
 export type GuestFlow =
-  | /** Nunca participó: muestra el formulario de bienvenida. */
+  | /** Sin sesión o nunca participó: muestra el tablero con el form de bienvenida. */
   "fresh"
-  | /** Ya participa: formulari oculto, puede cambiar su voto. */
+  | /** Ya participa con su cuenta: formulari oculto, puede cambiar su voto. */
   "linked"
-  | /** Tenía identidad guardada, pero su fila ya no existe. */
-  "stale";
+  | /** Tiene identidad legacy anónima viva: puede ADOPTAR la fila con la cuenta. */
+  "adoptable";
 
-/** Resuelve qué pantalla le toca al invitado (sin efectos, solo comparación). */
+/**
+ * Resuelve qué pantalla le toca al participante: primero gana la fila de la
+ * SESIÓN (por `auth_user_id`); si no existe, la identidad legacy del
+ * dispositivo habilita la adopción de la fila anónima que él mismo creó.
+ */
 export function resolveGuestFlow(
   identity: GuestIdentity | null,
   panorama: SavedPanorama | null,
+  sessionUserId: string | null,
 ): GuestFlow {
-  if (panorama === null) {
-    return "fresh";
-  }
-  if (identity === null || !isGuestSecretLike(identity.guestSecret)) {
+  if (panorama === null || sessionUserId === null) {
     return "fresh";
   }
   const linked = panorama.attendees.some(
-    (attendee) => attendee.id === identity.participantId,
+    (attendee) => attendee.authUserId === sessionUserId,
   );
-  return linked ? "linked" : "stale";
+  if (linked) {
+    return "linked";
+  }
+  const adoptable =
+    identity !== null &&
+    identity.panoramaId === panorama.id &&
+    isGuestSecretLike(identity.guestSecret) &&
+    panorama.attendees.some((attendee) => attendee.id === identity.participantId);
+  return adoptable ? "adoptable" : "fresh";
 }
 
-/** El asistente propio (por id) dentro de la clasificación, si participa. */
+/** El asistente propio (por id del participante), si participa. */
 export function getOwnAttendee(
   panorama: SavedPanorama,
   identity: GuestIdentity,
 ): Attendee | null {
   return panorama.attendees.find((attendee) => attendee.id === identity.participantId) ?? null;
+}
+
+/** El asistente propio (por cuenta de la sesión), si ya participa. */
+export function getOwnAttendeeByUserId(
+  panorama: SavedPanorama,
+  sessionUserId: string,
+): Attendee | null {
+  return (
+    panorama.attendees.find((attendee) => attendee.authUserId === sessionUserId) ??
+    null
+  );
 }
 
 /** Resumen del tablero para el invitado: fechas y montos ya con formato local. */

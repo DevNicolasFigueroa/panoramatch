@@ -1,11 +1,10 @@
 "use client";
 
 /**
- * "¿Qué hay que llevar?" para el invitado sin cuenta (enlace /p/<id>).
- * La lista es pública (con nombres); si el invitado va "Voy" dentro del
- * cupo, agrega ítems y toma/libera los SUYOS: la DB valida el secreto en
- * el header, nadie toca el reclamo ajeno. Al dejar de ir, sus ítems se
- * liberan al momento (RF-3, efecto igual que el del voto de lugares).
+ * "¿Qué hay que llevar?" del enlace /p/<id> (auth universal). La lista es
+ * pública (con nombres); si el usuario va "Voy" dentro del cupo, agrega
+ * ítems y toma/libera los SUYOS: la DB valida `auth.uid()`, nadie toca el
+ * reclamo ajeno. Al dejar de ir, sus ítems se liberan al momento (RF-3).
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -24,8 +23,7 @@ import {
   type ContributionItem,
 } from "@/core/contribution-list";
 import { withCreatorAttendee } from "@/core/creator-attendee";
-import type { GuestIdentity } from "@/core/guest-participation";
-import { createGuestSupabaseClient } from "@/lib/supabase-client";
+import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import {
   claimChecklistItemRow,
   fetchChecklistItems,
@@ -36,14 +34,15 @@ import {
 
 interface GuestContributionListProps {
   panorama: SavedPanorama;
-  identity: GuestIdentity | null;
+  /** Id de la fila de participante propia (null si aún no participa). */
+  ownParticipantId: string | null;
   /** Estado actual del propio invitado (null si aún no participa). */
   ownStatus: AttendanceStatus | null;
 }
 
 export default function GuestContributionList({
   panorama,
-  identity,
+  ownParticipantId,
   ownStatus,
 }: GuestContributionListProps) {
   const [items, setItems] = useState<ContributionItem[] | null>(null);
@@ -53,7 +52,7 @@ export default function GuestContributionList({
 
   const { event } = panorama;
 
-  // Carga inicial: lectura pública a través del cliente de invitado.
+  // Carga inicial: lectura pública con el cliente de sesión.
   useEffect(() => {
     if (event.mode !== "colaborativo") {
       setItems(null);
@@ -62,9 +61,8 @@ export default function GuestContributionList({
     let cancelled = false;
     const run = async () => {
       try {
-        // El secreto se envía si existe, pero NO es obligatorio para leer.
         const loaded = await fetchChecklistItems(
-          createGuestSupabaseClient(identity?.guestSecret),
+          getSupabaseBrowserClient(),
           panorama.id,
         );
         if (!cancelled) {
@@ -81,17 +79,17 @@ export default function GuestContributionList({
     return () => {
       cancelled = true;
     };
-  }, [panorama.id, event.mode, identity?.guestSecret]);
+  }, [panorama.id, event.mode]);
 
   const sorted = useMemo(() => sortContributionItems(items ?? []), [items]);
   const progress = useMemo(() => getContributionProgress(items ?? []), [items]);
 
-  /** ¿Puede llevar ítems? Solo "Voy" dentro del cupo y con identidad propia. */
+  /** ¿Puede llevar ítems? Solo "Voy" dentro del cupo y con fila propia. */
   const canCarry =
-    identity !== null &&
+    ownParticipantId !== null &&
     ownStatus === "going" &&
     isClaimAuthorized(
-      { kind: "participant", participantId: identity.participantId },
+      { kind: "participant", participantId: ownParticipantId },
       panorama.attendees,
       event.maxCapacity,
     );
@@ -115,14 +113,14 @@ export default function GuestContributionList({
   /** Agrega un ítem a la lista (máx 10; duplicado bloqueado en core). */
   const addOwnItem = async (formEvent: React.FormEvent<HTMLFormElement>) => {
     formEvent.preventDefault();
-    if (identity === null || !canCarry) {
+    if (ownParticipantId === null || !canCarry) {
       return;
     }
     const result = addContributionItem(
       items ?? [],
       newName,
       "",
-      { kind: "participant", participantId: identity.participantId },
+      { kind: "participant", participantId: ownParticipantId },
       panorama.attendees,
       event.maxCapacity,
     );
@@ -139,7 +137,7 @@ export default function GuestContributionList({
     setError(null);
     try {
       // La base genera el id (y el orden de creación real).
-      const row = await insertChecklistItemRow(createGuestSupabaseClient(identity.guestSecret), {
+      const row = await insertChecklistItemRow(getSupabaseBrowserClient(), {
         panoramaId: panorama.id,
         name: chosenName,
       });
@@ -154,15 +152,15 @@ export default function GuestContributionList({
     }
   };
 
-  /** Toma un ítem libre y lo deja a nombre del propio invitado. */
+  /** Toma un ítem libre y lo deja a nombre del propio asistente. */
   const takeItem = async (itemId: string) => {
-    if (identity === null || !canCarry) {
+    if (ownParticipantId === null || !canCarry) {
       return;
     }
     const result = claimContributionItem(
       items ?? [],
       itemId,
-      { kind: "participant", participantId: identity.participantId },
+      { kind: "participant", participantId: ownParticipantId },
       panorama.attendees,
       event.maxCapacity,
     );
@@ -175,9 +173,9 @@ export default function GuestContributionList({
     const previous = items;
     setItems(result.items);
     try {
-      await claimChecklistItemRow(createGuestSupabaseClient(identity.guestSecret), {
+      await claimChecklistItemRow(getSupabaseBrowserClient(), {
         itemId,
-        claimedByRef: identity.participantId,
+        claimedByRef: ownParticipantId,
       });
     } catch {
       setItems(previous);
@@ -187,15 +185,15 @@ export default function GuestContributionList({
     }
   };
 
-  /** Libera un ítem que el propio invitado lleva. */
+  /** Libera un ítem que el propio asistente lleva. */
   const freeItem = async (itemId: string) => {
-    if (identity === null) {
+    if (ownParticipantId === null) {
       return;
     }
     const result = releaseContributionItem(
       items ?? [],
       itemId,
-      { kind: "participant", participantId: identity.participantId },
+      { kind: "participant", participantId: ownParticipantId },
       panorama.attendees,
       event.maxCapacity,
     );
@@ -209,9 +207,9 @@ export default function GuestContributionList({
     setItems(result.items);
     try {
       await releaseChecklistItemRow(
-        createGuestSupabaseClient(identity.guestSecret),
+        getSupabaseBrowserClient(),
         itemId,
-        identity.participantId,
+        ownParticipantId,
       );
     } catch {
       setItems(previous);
@@ -226,21 +224,21 @@ export default function GuestContributionList({
     if (
       ownStatus !== null &&
       ownStatus !== "going" &&
-      identity !== null &&
+      ownParticipantId !== null &&
       items !== null &&
-      items.some((item) => item.claimedByRef === identity.participantId)
+      items.some((item) => item.claimedByRef === ownParticipantId)
     ) {
       const previous = items;
-      setItems(dropContributionClaims(items, identity.participantId));
+      setItems(dropContributionClaims(items, ownParticipantId));
       void releaseChecklistClaimsOfRow(
-        createGuestSupabaseClient(identity.guestSecret),
+        getSupabaseBrowserClient(),
         panorama.id,
-        identity.participantId,
+        ownParticipantId,
       ).catch(() => {
         setItems(previous);
       });
     }
-  }, [ownStatus, identity?.participantId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ownStatus, ownParticipantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="rounded-2xl border border-ink/15 bg-elev p-4">
@@ -270,7 +268,7 @@ export default function GuestContributionList({
         {sorted.map((item) => {
           const isFree = item.claimedByRef === null;
           const isMine =
-            identity !== null && item.claimedByRef === identity.participantId;
+            ownParticipantId !== null && item.claimedByRef === ownParticipantId;
           return (
             <li
               key={item.id}

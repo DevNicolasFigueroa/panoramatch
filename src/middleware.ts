@@ -4,9 +4,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseEnv } from "@/lib/supabase-env";
 
 /**
- * Refresca la sesión de Supabase en cada petición para que las cookies
- * server-side no queden pegadas entre media sesión (patrón de @supabase/ssr).
- * No bloquea rutas: la protección de "/" vive en su server component.
+ * Refresca la sesión de Supabase en cada petición (patrón de @supabase/ssr)
+ * y protege las rutas de participación: auth universal, nadie responde un
+ * panorama sin sesión. La protección de "/" vive en su server component.
  */
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -27,8 +27,16 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  // IMPORTANTE: no agregues lógica entre esta línea y el return.
-  await supabase.auth.getUser();
+  const { data } = await supabase.auth.getUser();
+  const path = request.nextUrl.pathname;
+
+  // /p/<panorama_id>: solo con sesión; de vuelta va al login con `next`.
+  if (data.user === null && path.startsWith("/p/")) {
+    const redirectTo = request.nextUrl.clone();
+    redirectTo.pathname = "/login";
+    redirectTo.search = `?next=${encodeURIComponent(`${path}${request.nextUrl.search}`)}`;
+    return NextResponse.redirect(redirectTo);
+  }
 
   return supabaseResponse;
 }

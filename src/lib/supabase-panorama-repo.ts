@@ -61,7 +61,9 @@ export function mapParticipantRowToAttendee(row: ParticipantRow): Attendee {
     name: row.name,
     status: row.status,
     confirmedOrder: row.confirmed_order,
-    // Sin enlace (sin secreto) y sin cuenta Google: lo anotó el creador a mano.
+    authUserId: row.auth_user_id,
+    // Sin cuenta (y sobra el secreto en filas legacy sin adoptar): lo anotó
+    // el creador a mano (o es una fila anónima legacy aún no adoptada).
     creatorAdded: row.guest_secret === null && row.auth_user_id === null,
   };
 }
@@ -84,6 +86,31 @@ export function mapRowsToSavedPanorama(
     event,
     attendees: participants.map(mapParticipantRowToAttendee),
   };
+}
+
+/**
+ * Asegura la fila de perfil del usuario con sesión. Imbatible contra el
+ * fallo silencioso del trigger `on_auth_user_created` (carrera durante
+ * migraciones o borrado de usuarios): sin esta fila, el primer guardado de
+ * un panorama muere en el FK `panoramas_creator_id_fkey`. Idempotente.
+ */
+export async function ensureOwnProfileRow(
+  client: SupabaseClient,
+  userId: string,
+  displayName?: string,
+): Promise<void> {
+  const { error } = await client
+    .from("profiles")
+    .upsert(
+      {
+        id: userId,
+        display_name: displayName !== undefined && displayName !== "" ? displayName : "Usuario",
+      },
+      { onConflict: "id", ignoreDuplicates: true },
+    );
+  if (error !== null) {
+    throw new Error(error.message);
+  }
 }
 
 /* ─────────────── Lecturas ─────────────── */
@@ -157,7 +184,11 @@ export async function insertPanoramaRow(
   return assertData(data, error) as PanoramaRow;
 }
 
-/** Inserta un participante nuevo (devuelve la fila con orden canónico). */
+/**
+ * Inserta un participante nuevo (devuelve la fila con orden canónico).
+ * Con `authUserId` se une el usuario con sesión (auth obligatoria); sin él
+ * la fila queda anónima: solo el creador anota a mano así.
+ */
 export async function insertParticipantRow(
   client: SupabaseClient,
   payload: {
@@ -165,8 +196,8 @@ export async function insertParticipantRow(
     participantId?: string;
     name: string;
     status: AttendanceStatus;
-    /** Solo para el flujo de invitado sin cuenta. */
-    guestSecret?: string;
+    /** Cuenta de la sesión para el flujo con cuenta (RLS lo exige). */
+    authUserId?: string;
   },
 ): Promise<ParticipantRow> {
   const { data, error } = await client
@@ -176,8 +207,7 @@ export async function insertParticipantRow(
       panorama_id: payload.panoramaId,
       name: payload.name,
       status: payload.status,
-      ...(payload.guestSecret !== undefined ? { guest_secret: payload.guestSecret } : {}),
-      ...(payload.guestSecret === undefined ? { auth_user_id: null } : {}),
+      ...(payload.authUserId !== undefined ? { auth_user_id: payload.authUserId } : {}),
     })
     .select()
     .single();

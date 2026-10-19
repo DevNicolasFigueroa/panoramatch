@@ -3,10 +3,11 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { getSupabaseEnv } from "@/lib/supabase-env";
+import { resolveInternalRedirectPath } from "@/core/auth-validation";
 
 /**
- * Callback del OAuth de Google: recibe el `code`, lo cambia por sesión
- * (que queda en cookies via middleware) y regresa al inicio.
+ * Callback del OAuth/Correo: recibe el `code`, lo cambia por sesión (que
+ * queda en cookies via middleware) y regresa al `next` interno o al inicio.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams, origin } = new URL(request.url);
@@ -33,7 +34,8 @@ export async function GET(request: Request): Promise<NextResponse> {
   });
 
   if (errorParam !== null || code === null) {
-    return NextResponse.redirect(`${origin}/login?error=auth`);
+    const safeNext = resolveInternalRedirectPath(searchParams.get("next"));
+    return NextResponse.redirect(`${origin}/login?error=auth${safeNext !== null ? `&next=${encodeURIComponent(safeNext)}` : ""}`);
   }
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -41,5 +43,5 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.redirect(`${origin}/login?error=auth`);
   }
 
-  return NextResponse.redirect(`${origin}/`);
+  return NextResponse.redirect(`${origin}${resolveInternalRedirectPath(searchParams.get("next")) ?? "/"}`);
 }

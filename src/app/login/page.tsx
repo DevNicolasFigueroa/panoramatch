@@ -4,9 +4,11 @@ import { redirect } from "next/navigation";
 
 import { getSupabaseEnv } from "@/lib/supabase-env";
 import LoginView from "@/components/login-view";
+import { resolveInternalRedirectPath } from "@/core/auth-validation";
 
 /**
- * Pantalla de acceso (Requisito 1). Si ya hay sesión, directo al dashboard.
+ * Pantalla de acceso (Requisito 1). Si ya hay sesión, directo al dashboard
+ * (o al panorama que pedía el `next`).
  */
 export default async function LoginPage({
   searchParams,
@@ -16,6 +18,12 @@ export default async function LoginPage({
   const paramsResolved = await searchParams;
   const rawError = paramsResolved.error;
   const initialError = typeof rawError === "string" ? rawError : undefined;
+  const rawNext = paramsResolved.next;
+  // El `next` solo viaja si es una ruta interna con nuestra forma; lo demás
+  // se descarta (nada de open-redirect).
+  const pendingNext = resolveInternalRedirectPath(
+    typeof rawNext === "string" ? rawNext : undefined,
+  );
 
   const { url, anonKey } = getSupabaseEnv();
   const cookieStore = await cookies();
@@ -32,8 +40,8 @@ export default async function LoginPage({
 
   const { data } = await supabase.auth.getUser();
   if (data.user !== null) {
-    redirect("/");
+    redirect(pendingNext ?? "/");
   }
 
-  return <LoginView initialError={initialError} />;
+  return <LoginView initialError={initialError} pendingNext={pendingNext} />;
 }

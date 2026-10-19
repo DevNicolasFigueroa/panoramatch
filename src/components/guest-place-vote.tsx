@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * "¿A dónde vamos?" para el invitado sin cuenta (enlace /p/<id>).
- * Muestra candidatos y conteos exactos a cualquiera; si su estado es "Voy",
- * propone lugares y vota (un voto vigente, cambiable mientras esté abierta).
- * La DB valida el secreto en el header: nadie toca la fila ajena.
+ * "¿A dónde vamos?" del enlace /p/<id> (auth universal). Muestra candidatos
+ * y conteos exactos a cualquiera con sesión; si su estado es "Voy", propone
+ * lugares y vota (un voto vigente, cambiable mientras esté abierta). La DB
+ * valida `auth.uid()`: nadie toca la fila ajena.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -18,8 +18,7 @@ import {
   tallyPlaceVotes,
 } from "@/core/place-vote";
 import { MAX_PLACE_CANDIDATES, addPlaceCandidate } from "@/core/place-vote";
-import type { GuestIdentity } from "@/core/guest-participation";
-import { createGuestSupabaseClient } from "@/lib/supabase-client";
+import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import {
   deletePlaceVoteRow,
   fetchPlaceData,
@@ -30,7 +29,8 @@ import {
 
 interface GuestPlaceVoteProps {
   panorama: SavedPanorama;
-  identity: GuestIdentity | null;
+  /** Id de la fila de participante propia (null si aún no participa). */
+  ownParticipantId: string | null;
   /** Estado actual del propio invitado (null si aún no participa). */
   ownStatus: AttendanceStatus | null;
 }
@@ -38,7 +38,7 @@ interface GuestPlaceVoteProps {
 /** Estado local del tablero de lugares (duplico el shape mínimo del store). */
 interface PlaceLocalState extends PlaceData {}
 
-export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestPlaceVoteProps) {
+export default function GuestPlaceVote({ panorama, ownParticipantId, ownStatus }: GuestPlaceVoteProps) {
   const [place, setPlace] = useState<PlaceLocalState | null>(null);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestP
 
   const { event } = panorama;
 
-  // Carga inicial del tablero: lecturas públicas a través del cliente de invitado.
+  // Carga inicial del tablero: lectura pública con el cliente de sesión.
   useEffect(() => {
     if (event.mode !== "social") {
       return;
@@ -54,8 +54,7 @@ export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestP
     let cancelled = false;
     const run = async () => {
       try {
-        // El secreto se envía si existe, pero NO es obligatorio para leer.
-        const data = await fetchPlaceData(createGuestSupabaseClient(identity?.guestSecret), panorama.id);
+        const data = await fetchPlaceData(getSupabaseBrowserClient(), panorama.id);
         if (!cancelled) {
           setPlace(data);
         }
@@ -70,7 +69,7 @@ export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestP
     return () => {
       cancelled = true;
     };
-  }, [panorama.id, event.mode, identity?.guestSecret]);
+  }, [panorama.id, event.mode]);
 
   const candidates = place?.candidates ?? [];
   const votes = place?.votes ?? [];
@@ -82,16 +81,16 @@ export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestP
     [candidates, votes, matchCandidateId],
   );
   const isOpen = matchCandidateId === null;
-  const canVote = isOpen && ownStatus === "going" && identity !== null;
-  const myVote = identity === null ? null : votes.find((vote) => vote.voterRef === identity.participantId);
+  const canVote = isOpen && ownStatus === "going" && ownParticipantId !== null;
+  const myVote = ownParticipantId === null ? null : votes.find((vote) => vote.voterRef === ownParticipantId);
 
   if (event.mode !== "social") {
     return null;
   }
 
-  /** Vota (o cambia) el propio invitado: una fila de place_votes con su id. */
+  /** Vota (o cambia) el propio asistente: una fila de place_votes con su id. */
   const voteFor = async (candidateId: string) => {
-    if (identity === null || !canVote) {
+    if (ownParticipantId === null || !canVote) {
       return;
     }
     setIsBusy(true);
@@ -101,8 +100,8 @@ export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestP
       if (current === null) {
         return current;
       }
-      const nextVote = { candidateId, voterRef: identity.participantId, delegated: false };
-      const existing = current.votes.find((vote) => vote.voterRef === identity.participantId);
+      const nextVote = { candidateId, voterRef: ownParticipantId, delegated: false };
+      const existing = current.votes.find((vote) => vote.voterRef === ownParticipantId);
       if (existing !== undefined && existing.candidateId === candidateId) {
         return current;
       }
@@ -111,14 +110,14 @@ export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestP
         votes:
           existing === undefined
             ? [...current.votes, nextVote]
-            : current.votes.map((vote) => (vote.voterRef === identity.participantId ? nextVote : vote)),
+            : current.votes.map((vote) => (vote.voterRef === ownParticipantId ? nextVote : vote)),
       };
     });
     try {
-      await upsertPlaceVoteRow(createGuestSupabaseClient(identity.guestSecret), {
+      await upsertPlaceVoteRow(getSupabaseBrowserClient(), {
         panoramaId: panorama.id,
         candidateId,
-        voterRef: identity.participantId,
+        voterRef: ownParticipantId,
       });
     } catch {
       setPlace(previous);
@@ -143,7 +142,7 @@ export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestP
     setError(null);
     const optimisticName = normalizePlaceName(newName);
     try {
-      const row = await insertPlaceCandidateRow(createGuestSupabaseClient(identity?.guestSecret), {
+      const row = await insertPlaceCandidateRow(getSupabaseBrowserClient(), {
         panoramaId: panorama.id,
         name: optimisticName,
       });
@@ -162,20 +161,20 @@ export default function GuestPlaceVote({ panorama, identity, ownStatus }: GuestP
 
   // Caso límite 6: al dejar de estar "Voy", su voto sale del tablero manualmente.
   useEffect(() => {
-    if (ownStatus !== null && ownStatus !== "going" && myVote !== null && identity !== null) {
+    if (ownStatus !== null && ownStatus !== "going" && myVote !== null && ownParticipantId !== null) {
       const previous = place;
       setPlace((current) =>
         current === null
           ? current
-          : { ...current, votes: current.votes.filter((vote) => vote.voterRef !== identity.participantId) },
+          : { ...current, votes: current.votes.filter((vote) => vote.voterRef !== ownParticipantId) },
       );
-      void deletePlaceVoteRow(createGuestSupabaseClient(identity.guestSecret), panorama.id, identity.participantId).catch(
+      void deletePlaceVoteRow(getSupabaseBrowserClient(), panorama.id, ownParticipantId).catch(
         () => {
           setPlace(previous);
         },
       );
     }
-  }, [ownStatus, myVote?.candidateId, identity?.participantId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ownStatus, myVote?.candidateId, ownParticipantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="rounded-2xl border border-ink/15 bg-elev p-4">
