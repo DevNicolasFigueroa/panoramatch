@@ -23,5 +23,5 @@ Orden secuencial; cada tarea es un paso alcanzable y verificable.
 ## Fase 4 — Verificación y cierre
 
 - [x] T10-a — `npm run test` 42/42 · `npx tsc --noEmit` limpio · `npm run build` EXIT=0.
-- [ ] T10-b — Smoke del dueño en 375px: crear Colaborativo con lista, responder por enlace en ventana privada (tomar/liberar/añadir), espectador ve nombres, responsable se baja y libera solo, máximo y duplicados, cupo llena la espera y suelta reclamos.
-- [ ] T11 — Spec/plan/tasks finalizados y **commit SOLO con autorización del dueño** (sin push salvo permiso aparte); registro posterior en AGENTS/MEMORY si el dueño lo pide.
+- [x] T10-b — Smoke en 375px. **Lado del enlace (IA, Chrome DevTools, contexto aislado):** invitado nuevo se une como «Voy» (3 de 4) → toma «Hielo» («2 de 2 · listo» con su nombre visible) → agrega «Pecho» (persistido, libre primero, «2 de 3») → pasa a «No puedo»: sus ítems quedan libres AL INSTANTE (RF-3 en la base: `Hielo -> (libre)`), a «No pueden» y sin botones; espectador sin identidad: lista y nombres visibles, sin botones ni formulario. **Lado del creador:** probado por el dueño con su sesión real (5 ítems añadidos a su panorama Colaborativo en producción). Fixtures de prueba eliminados (0 restantes).
+- [x] T11 — Spec/plan/tasks finalizados y commit con autorización del dueño; fusión a `develop` (sin push a `main`). AGENTS sin cambios; memoria actualizada en el mismo flujo de cierre.
