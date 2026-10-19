@@ -3,40 +3,31 @@
 Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo que ya no aporte.
 
 ## Estado actual
-- **Spec 001 implementada (rama `feat/001-modo-social-match` → `develop`)**: votación de lugares del modo Social completa: form opcional de candidatos, tablero "¿A dónde vamos?" en dashboard (votar propio/delegado, declarar Match) y en el enlace del invitado (vota y propone solo si va "Voy"), conteos públicos, cierre definitivo tras Match.
-- **Spec 002 implementada y fusionada a `develop` («lista de aportes» del Colaborativo)**: checklist «¿Qué hay que llevar?» — núcleo puro `src/core/contribution-list.ts` (máx 10 ítems y ≤40 caracteres, duplicados normalizados, un responsable por ítem; toma/libera por identidad; creador «Voy» permanente; liberación automática RF-3 al dejar de ir; libres primero y progreso «X de Y» sin «0 de 0»), tabla `checklist_items` con RLS probada vía REST (13 casos) y UI completa: formulario de siembra en el creador + sección en el dashboard + `GuestContributionList` en el enlace. Puertas: 42/42 · tsc limpio · build EXIT=0. Smoke del enlace verificado en navegador; el lado del creador lo probó el dueño en producción.
-- **Login con Google funcionando E2E** (dashboard protegido, `/login`, `/auth/callback`); provider activo por Dashboard (manual).
-- Tablas: `profiles`, `panoramas`, `participants`, `place_candidates`, `place_votes`, `checklist_items` (+ `panoramas.match_candidate_id` / `creator_name`), todas con RLS.
-- Migraciones MCP: `create_panoramatch_tables`, `panoramatch_rls_and_triggers`, `grant_client_side_participant_ids`, `hardening_function_security`, `create_place_vote_tables`, `place_vote_rls`, `place_votes_guest_delete`, `place_vote_polish_index`, `place_votes_update_privileges_fix`, `add_panorama_creator_name`, `create_checklist_items`, `checklist_item_rls`, `checklist_item_privileges_fix` (002).
-- RLS de lugares y checklist probados empíricamente con REST (12 + 13 casos): solo "Voy" con su header toca su voto/reclamo; `delegated` bloqueado por privilegio de columna; Match cerrado = sin escrituras; lectura pública; el invitado del checklist solo actualiza `claimed_by_ref`.
-- Advisors: queda configurar "Leaked password protection" (Dashboard → Auth). WARN `multiple_permissive_policies` es patrón aceptado (público + dueño + invitado), igual en V2.
+- **Auth universal obligatoria implementada (`feat/003-auth-obligatoria`, SIN commit aún)**: nadie interactúa en un panorama sin sesión (Google o correo). `core/auth-validation.ts` (contraseña ≥8, correo, nombre ≤40, `next` interno) con tests (60/60 · tsc limpio · build EXIT=0). Middleware protege `/p/*` con redirect `/login?next=`; login con pestañas Google/Entrar/Crear cuenta; el callback regresa al `next` (anti open-redirect solo `/` y `/p/<uuid>`).
+- **Identidad por cuenta**: fila `participants` con `auth_user_id` (índice único parcial `(panorama_id, auth_user_id)`); nombre sale del perfil (`full_name` del metadata), sin input de nombre en el enlace; `creatorAdded` = fila sin uid ni secret (anotada a mano). `guest-identity.ts` queda SOLO lectura para adopción; `createGuestSupabaseClient` eliminado (todo via cliente de sesión con cookies).
+- **Adopción de fila legacy**: `adopt_anonymous_participant(panorama, secret)` (SECURITY DEFINER, solo execute a `authenticated`): valida uid de sesión, fila anónima con secret, y que el usuario no tenga fila en ese panorama; setea uid y anula el secret (uso único). El invitado que vuelve con cuenta recupera su respuesta anterior desde el mismo dispositivo.
+- **Escrituras anónimas eliminadas**: políticas guest (participantes, place_votes, checklist_items, place_candidates) borradas + revokes a `anon`; políticas `*_user_*` por `auth_user_id = (select auth.uid())` (votos ALL con `voter_ref=q.id` y `delegated=false`; checklist insert/claim con `status='going'`; candidatos con Match abierto); `profiles_insert_own` (el perfil lo crea trigger `on_auth_user_created`).
+- Migraciones nuevas (15 → 18): `auth_users_participation`, `auth_users_votes_and_claims`, `auth_users_place_candidates`.
+- RLS con cuenta probada REST: adopción (anón 401 → 200 uid → repetido null), join propio 201/duplicado 409/uid falsificado 403, votos propio OK / ajeno y `delegated` denegados, claims propio OK / ajeno intocable / insert solo «Voy», perfiles `own` exclusivo, fila a mano intocable, ANON sin ninguna escritura (401).
+- Smoke navegador 375px OK: enlace sin sesión → login con `next` intacto; errores de acceso amables; login correo → vuelve al enlace; Social con voto propio; Colaborativo con ítem tomado y RF-3 liberando al bajar a «En duda»; dashboard reconoce cuenta de correo.
+- **Incidencia resuelta «no se guardan los panoramas»**: usuarios de auth sin fila en `profiles` (trigger `on_auth_user_created` fallido/limpieza) reventaban el FK `panoramas_creator_id_fkey` al guardar. Reparación en vivo por SQL + **auto-reparación cliente** `ensureOwnProfileRow` (upsert `profiles_insert_own` al abrir el dashboard, en el store). AVISO: los panoramas viejos del dueño murieron en CASACADA al borrarse el perfil de la cuenta del 16-oct — solo recuperables desde backups del panel.
 
 ## Decisiones (y por qué)
 - **D6 empieza vacío en la nube**: nada se importa del localStorage viejo (`migrateLegacyStore` viva en core).
-- **D1/D2**: creador con sesión Google; invitado sin cuenta con `guest_secret` por header `x-participant-secret`, jamás en URL.
-- **D3 `starts_at` es texto local** `'YYYY-MM-DDTHH:mm'` (check DB); nunca `toISOString()` ni `new Date("AAAA-MM-DD")`.
-- **D7 Social sin titulares/suplentes**: votan creador + todos los "Voy" (incluso con cupo definido); delegación del creador SOLO para confirmados anotados a mano (`creatorAdded`, derivado de fila sin `guest_secret` ni `auth_user_id`).
-- **D8 voto mutable hasta el Match**: `match_candidate_id` en la fila del panorama cierra TODO (insert/update/candidatos) en RLS; conteo congelado.
-- **D9 un voto vigente por votante**: índice único `(panorama_id, voter_ref)` + upsert `onConflict`; cambiar voto = update de su fila.
-- **D10 tests sin dependencias nuevas**: `tsconfig.test.json` compila `src/core` a `.test-build/` (CommonJS, gitignore) y `npm run test` corre `node --test ".test-build/**/*.test.js"`; resuelve el problema de imports sin extensión.
-- **D11 creador «Voy» implícito** (aprobada por el dueño): el creador ES un asistente: «Voy» fijo, orden 0, ocupa cupo (puede desplazar invitados a espera), boleta entre n+1 y «Van» en las tres vistas; quórum SOLO invitados (el panorama no nace verde); nombre real de Google en `panoramas.creator_name` (null → «El creador»), reservado ante invitados y anotados a mano; jamás delegable; fila con chip «Organizador» sin botones de estado.
-- **D12 sin lenguaje de partido en Social**: las listas NO llevan chips «Titular»/«Suplente N» (decision del dueño: "no es un partido"); solo queda «Organizador» en la fila del creador.
-- **D13 lista de aportes del Colaborativo (spec 002, aprobada por el dueño)**: creador + confirmados «Voy» dentro del cupo añaden ítems (tras crear o por el form); cada uno solo toma/libera los suyos («Yo lo llevo», referencia `'creator'` o id de participante en `claimed_by_ref`); si el responsable deja de ser «Voy» o cae a espera, sus ítems se liberan en el mismo flujo (RF-3); el creador elimina SOLO ítems libres; espectadores ven los nombres; orden libres-primero por core; cantidad dentro del texto (máx 10, ≤40).
-- **Privilegios de la 002**: los grants de tabla por defecto anulan el grant por columna — en `checklist_items` se revocó el paquete y se re-otorgó al mínimo (invitado: solo update de `claimed_by_ref`); recrear la lección en tablas futuras.
-- **Escritura optimista + reversión** en store; candidatos iniciales del form se insertan con ids del cliente.
+- **D3 `starts_at` es texto local** `'YYYY-MM-DDTHH:mm'`; nunca `toISOString()` ni `new Date("AAAA-MM-DD")`.
+- **D7/D8/D9/D10/D11/D12/D13**: creato implícito, Match cierra, voto único mutable, tests node --test, lenguaje sin partido, lista de aportes — ver commits previos de `develop`.
+- **D14 auth universal (aprobada por el dueño)**: sesión obligatoria en cualquier panorama; contraseña mínima 8; confirmación de correo DESACTIVADA (a configurar en Dashboard); nombre fijo del perfil (choque de duplicado → error); mantener delegación Social y anotados a mano; fila anónima vieja se adopta con `guest_secret` local.
+- **Privilegios de tabla**: los grants por defecto anulan el grant por columna — revocar paquete y re-otorgar al mínimo (lección `checklist_item_privileges_fix`).
 
 ## Aprendizajes y errores a evitar
 - Los updaters de `setState` NO corren sincrónicamente: validar duplicados antes de `setState`.
-- Efectos SSR-sensibles solo tras montar (reload del reloj, identidad de invitado).
-- Windows: `npm.cmd`/`npx.cmd`/`curl.exe` (PowerShell bloquea `npm.ps1`); `Select-String` sobre build puede devolver exit code 1 falso — verificar con `echo $LASTEXITCODE`.
-- RLS: comparar `voter_ref`/`claimed_by_ref` (text) con uuid usando `q.id::text` (uuid = text lanza 42883); secrets de invitado comparar como `(q.guest_secret)::text = participant_request_secret()` (el helper devuelve uuid); `auth.uid()` envuelto en `(select auth.uid())` cuando toque escribir políticas nuevas.
-- PostgREST upsert requiere el índice único exacto en `onConflict`; el payload del invitado NO incluye `delegated` (privilegio de columna lo prohíbe).
-- `AGENTS.md` solo comandos verificables; MCP en `mcp.servers` de `opencode.json`.
-- Los PATCH de RLS «negados» responden sin error aparente (filas afectadas 0): verificar SIEMPRE el estado real de la fila por SQL, no solo el HTTP 204.
-- **Regla del dueño (proceso)**: jamás hacer commits, push, specs nuevas ni registros de features sin su autorización explícita; los cambios quedan en el working tree hasta que lo apruebe (y el registro en AGENTS/MEMORY en el momento del commit puntual que él pida).
-- Usuario de pruebas pendiente de borrar en Auth Admin: `panoramatch.rls.test.*@gmail.com` (perfil `60310436-e6fa-4963-88a4-5f0a73a200ae`).
+- Windows: `npm.cmd`/`npx.cmd`; exit codes con `echo $LASTEXITCODE`.
+- RLS: comparar refs de texto con uuid vía `q.id::text`; `(select auth.uid())`; PATCH negado responde 204 silencioso — verificar fila por SQL.
+- `execute_sql` de MCP devuelve SOLO el resultado de la última sentencia: las verificaciones de estado van una por llamada.
+- Supabase signUp sin session + sin error = email coincidente con confirmación activada: mensaje de UI neutral («revisa tu correo o entra»). El plan pide DESACTIVAR la confirmación en Dashboard.
+- **Regla del dueño (proceso)**: jamás commits, push ni specs sin su autorización explícita; el trabajo queda en el working tree.
 
 ## Próximos pasos
-- Considerar Realtime para tablero vivo (listas de lugares y aportes).
-- Specs siguientes: Deportivo (puntos en la cancha) y gastos por partida — solo con orden del dueño.
-- Limpieza pendiente: usuarios de prueba `panoramatch.rls.test.*@gmail.com` (perfil `60310436-…`) — borrado manual en Auth Admin; "Leaked password protection" en Dashboard → Auth.
+- Pendientes del dueño en Dashboard: (1) Desactivar «Confirm email» (Auth → Providers); (2) activar «Leaked password protection»; (3) borrar usuarios de prueba en Auth Admin: `panoramatch.rls003@gmail.com` y `panoramatch.cre003@gmail.com` (+ el legacy `panoramatch.rls.test.*`).
+- Commit/push de `feat/003-auth-obligatoria` y fusión `--ff-only` a `develop`: SOLO con orden del dueño.
+- Specs futuras: Deportivo y gastos por partida; Realtime para tableros.
