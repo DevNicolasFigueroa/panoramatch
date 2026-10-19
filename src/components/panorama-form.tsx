@@ -13,6 +13,7 @@ import { PANORAMA_MODES } from "@/core/types";
 import { getTodayLocalValue, isValidLocalDatetime } from "@/core/datetime-cl";
 import { formatCLP, isValidCLPAmount } from "@/core/currency-clp";
 import { MAX_PLACE_CANDIDATES } from "@/core/place-vote";
+import { MAX_CONTRIBUTION_ITEMS, MAX_CONTRIBUTION_NAME_LENGTH } from "@/core/contribution-list";
 import { MODE_EMOJI } from "@/components/ui-theme";
 
 /** Errores por campo, presentados en español para el usuario. */
@@ -23,6 +24,7 @@ interface FormErrors {
   maxCapacity?: string;
   totalCostCLP?: string;
   placeCandidates?: string;
+  checklistItems?: string;
 }
 
 export default function PanoramaForm({
@@ -38,6 +40,7 @@ export default function PanoramaForm({
   const [capacityText, setCapacityText] = useState("");
   const [costText, setCostText] = useState("");
   const [placeNamesText, setPlaceNamesText] = useState("");
+  const [checklistText, setChecklistText] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
 
   useEffect(() => {
@@ -48,7 +51,7 @@ export default function PanoramaForm({
 
   const handleSubmit = (formEvent: React.FormEvent<HTMLFormElement>) => {
     formEvent.preventDefault();
-    const nextErrors = validate(title, mode, startsAt, capacityText, costText, placeNamesText);
+    const nextErrors = validate(title, mode, startsAt, capacityText, costText, placeNamesText, checklistText);
     if (nextErrors !== null) {
       setErrors(nextErrors);
       return;
@@ -64,6 +67,11 @@ export default function PanoramaForm({
       placeCandidates:
         mode === "social"
           ? placeNamesText.split("\n").map((line) => line.trim())
+          : undefined,
+      // Colaborativo: ítems iniciales de la lista, uno por línea (opcional).
+      checklistItems:
+        mode === "colaborativo"
+          ? checklistText.split("\n").map((line) => line.trim())
           : undefined,
     });
     if (!created) {
@@ -214,6 +222,28 @@ export default function PanoramaForm({
           </div>
         )}
 
+        {/* Ítems de la lista de aportes (solo modo Colaborativo) */}
+        {mode === "colaborativo" && (
+          <div className="mt-4 flex flex-col gap-1.5">
+            <label htmlFor="checklistItems" className="text-sm font-semibold text-ink">
+              ¿Qué hay que llevar? (opcional)
+            </label>
+            <textarea
+              id="checklistItems"
+              value={checklistText}
+              onChange={(e) => setChecklistText(e.target.value)}
+              rows={3}
+              placeholder={"Carbón\nHielo x2"}
+              className="w-full rounded-xl border border-ink/20 bg-paper px-3.5 py-2.5 text-base text-ink outline-none transition focus:border-cancha"
+            />
+            <span className="text-xs text-ink-soft">
+              Un ítem por línea, máximo {MAX_CONTRIBUTION_ITEMS} y hasta {MAX_CONTRIBUTION_NAME_LENGTH} caracteres
+              cada uno. Tú y los «Voy» pueden agregar más después.
+            </span>
+            {errors.checklistItems !== undefined && <FieldError message={errors.checklistItems} />}
+          </div>
+        )}
+
         {/* Acción */}
         <button
           type="submit"
@@ -237,6 +267,7 @@ function validate(
   capacityText: string,
   costText: string,
   placeNamesText: string,
+  checklistText: string,
 ): FormErrors | null {
   const errors: FormErrors = {};
 
@@ -258,6 +289,19 @@ function validate(
       .filter((line) => line !== "");
     if (lines.length > MAX_PLACE_CANDIDATES) {
       errors.placeCandidates = `Máximo ${MAX_PLACE_CANDIDATES} lugares por panorama.`;
+    }
+  }
+
+  // Ítems de la lista solo en Colaborativo: máximo 10 y hasta 40 caracteres.
+  if (mode === "colaborativo") {
+    const lines = checklistText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+    if (lines.length > MAX_CONTRIBUTION_ITEMS) {
+      errors.checklistItems = `Máximo ${MAX_CONTRIBUTION_ITEMS} ítems por panorama.`;
+    } else if (lines.some((line) => line.length > MAX_CONTRIBUTION_NAME_LENGTH)) {
+      errors.checklistItems = `Cada ítem puede tener hasta ${MAX_CONTRIBUTION_NAME_LENGTH} caracteres.`;
     }
   }
 

@@ -35,6 +35,7 @@ import {
 import ThemeToggle from "@/components/theme-toggle";
 import QuorumSemaphore from "@/components/quorum-semaphore";
 import GuestPlaceVote from "@/components/guest-place-vote";
+import GuestContributionList from "@/components/guest-contribution-list";
 import { MODE_EMOJI, MODE_STYLES, STATUS_OPTIONS } from "@/components/ui-theme";
 
 const SPLASH = (
@@ -361,6 +362,16 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
       {/* ¿A dónde vamos? (modo Social): conteos públicos; vota solo "Voy" */}
       {event.mode === "social" && (
         <GuestPlaceVote
+          panorama={panorama}
+          identity={identity}
+          ownStatus={ownAttendee?.status ?? null}
+        />
+      )}
+
+      {/* ¿Qué hay que llevar? (modo Colaborativo): lista pública con nombres;
+          solo "Voy" dentro del cupo añade, toma o libera con su secreto */}
+      {event.mode === "colaborativo" && (
+        <GuestContributionList
           panorama={panorama}
           identity={identity}
           ownStatus={ownAttendee?.status ?? null}

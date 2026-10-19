@@ -43,17 +43,36 @@ import {
   type PlaceCandidate,
   type PlaceVoteRecord,
 } from "@/core/place-vote";
+import {
+  CREATOR_CLAIM_REF,
+  MAX_CONTRIBUTION_ITEMS,
+  MAX_CONTRIBUTION_NAME_LENGTH,
+  addContributionItem as addCoreContributionItem,
+  claimContributionItem as claimCoreContributionItem,
+  dropContributionClaims,
+  getContributionRuleErrorMessage,
+  normalizeContributionName,
+  releaseContributionItem as releaseCoreContributionItem,
+  removeContributionItem as removeCoreContributionItem,
+  type ContributionItem,
+} from "@/core/contribution-list";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import {
   deletePanoramaRow,
+  deleteChecklistItemRow,
   deletePlaceCandidateRow,
   deletePlaceVoteRow,
+  fetchChecklistItems,
   fetchCreatorPanoramas,
   fetchPlaceData,
   declareMatchRow,
+  insertChecklistItemRow,
   insertPanoramaRow,
   insertParticipantRow,
   insertPlaceCandidateRow,
+  releaseChecklistClaimsOfRow,
+  releaseChecklistItemRow,
+  claimChecklistItemRow,
   updateParticipantStatus,
   upsertPlaceVoteRow,
   type ParticipantRow,
@@ -81,6 +100,14 @@ export interface PanoramaStoreActions {
   castCreatorVote: (candidateId: string, participantId: string | null) => boolean;
   /** Declara el Match con el candidato elegido y cierra la votación definitivamente. */
   declarePlaceMatch: (candidateId: string) => boolean;
+  /** Agrega un ítem a la Lista de aportes (Colaborativo). Devuelve false si lo bloquean las reglas. */
+  addChecklistItem: (name: string) => boolean;
+  /** Elimina un ítem libre de la Lista de aportes (solo creador). Devuelve false si lo bloquean las reglas. */
+  removeChecklistItem: (itemId: string) => boolean;
+  /** El creador toma un ítem libre («Yo lo llevo»). Devuelve false si lo bloquean las reglas. */
+  claimCreatorChecklistItem: (itemId: string) => boolean;
+  /** El creador libera un ítem que él lleva. Devuelve false si lo bloquean las reglas. */
+  releaseCreatorChecklistItem: (itemId: string) => boolean;
 }
 
 /** Estado vivo del tablero de lugares del panorama activo (modo Social). */
@@ -96,6 +123,8 @@ const EMPTY_PLACE_STATE: PlaceVoteState = {
   matchCandidateId: null,
 };
 
+const EMPTY_CONTRIBUTIONS: ContributionItem[] = [];
+
 export interface PanoramaStore {
   state: PanoramaStoreState;
   /** true mientras se carga la lista desde Supabase. */
@@ -108,6 +137,8 @@ export interface PanoramaStore {
   savedPanoramas: SavedPanorama[];
   /** Tablero de lugares del panorama activo Social (¿a dónde vamos?). */
   place: PlaceVoteState | null;
+  /** Lista de aportes del panorama activo Colaborativo; null mientras carga. */
+  checklist: ContributionItem[] | null;
   actions: PanoramaStoreActions;
   /** Limpia el mensaje de error visible. */
   dismissError: () => void;
@@ -145,6 +176,28 @@ function dedupePlaceCandidates(rawNames: string[]): string[] {
   return names;
 }
 
+/** Textos de ítems normalizados y sin repetidos (máx 10, spec 002). */
+function dedupeChecklistItems(rawNames: string[]): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const raw of rawNames) {
+    const normalized = normalizeContributionName(raw);
+    if (normalized === "" || normalized.length > MAX_CONTRIBUTION_NAME_LENGTH) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    names.push(normalized);
+    if (names.length >= MAX_CONTRIBUTION_ITEMS) {
+      break;
+    }
+  }
+  return names;
+}
+
 export function usePanoramaStore(
   userId: string | null,
   /** Nombre de Google del creador, para persistirlo al crear. */
@@ -154,6 +207,7 @@ export function usePanoramaStore(
   const [isLoading, setIsLoading] = useState(true);
   const [lastError, setLastError] = useState<string | null>(null);
   const [place, setPlace] = useState<PlaceVoteState | null>(null);
+  const [checklist, setChecklist] = useState<ContributionItem[] | null>(null);
 
   // Carga inicial: solo los panoramas del creador con sesión.
   useEffect(() => {
@@ -222,6 +276,35 @@ export function usePanoramaStore(
     };
   }, [activeIdForPlace, activeModeForPlace]);
 
+  // Carga de la Lista de aportes del panorama activo (solo Colaborativo).
+  const activeIdForChecklist = getActivePanorama(state)?.id ?? null;
+  const activeModeForChecklist = getActivePanorama(state)?.event.mode ?? null;
+  useEffect(() => {
+    if (activeIdForChecklist === null || activeModeForChecklist !== "colaborativo") {
+      setChecklist(null);
+      return;
+    }
+    let cancelled = false;
+    setChecklist(null);
+    const run = async () => {
+      try {
+        const items = await fetchChecklistItems(getSupabaseBrowserClient(), activeIdForChecklist);
+        if (!cancelled) {
+          setChecklist(items);
+        }
+      } catch {
+        if (!cancelled) {
+          setChecklist(EMPTY_CONTRIBUTIONS);
+          setLastError("No se pudo cargar la lista de aportes. Intenta recargar.");
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeIdForChecklist, activeModeForChecklist]);
+
   const createEvent = useCallback(
     (input: CreateEventInput): boolean => {
       if (userId === null) {
@@ -244,11 +327,19 @@ export function usePanoramaStore(
         input.mode === "social"
           ? dedupePlaceCandidates(input.placeCandidates ?? [])
           : [];
+      // Ítems iniciales de la Lista de aportes (modo Colaborativo).
+      const initialItems =
+        input.mode === "colaborativo"
+          ? dedupeChecklistItems(input.checklistItems ?? [])
+          : [];
       void insertPanoramaRow(getSupabaseBrowserClient(), saved, userId)
         .then(() => {
           setLastError(null);
           if (initialCandidates.length > 0) {
             void seedPlaceCandidates(panoramaId, initialCandidates);
+          }
+          if (initialItems.length > 0) {
+            void seedChecklistItems(panoramaId, initialItems);
           }
         })
         .catch(() => {
@@ -280,6 +371,30 @@ export function usePanoramaStore(
       .catch(() => {
         setPlace(EMPTY_PLACE_STATE);
         setLastError("No se pudieron guardar los lugares iniciales. Agrégalos en el panel.");
+      });
+  }, []);
+
+  /** Inserta en la nube los ítems iniciales y muestra la lista local. */
+  const seedChecklistItems = useCallback((panoramaId: string, names: string[]) => {
+    const items: ContributionItem[] = names.map((name) => ({
+      id: newUuid(),
+      name,
+      claimedByRef: null,
+    }));
+    setChecklist(items);
+    void Promise.all(
+      items.map((item) =>
+        insertChecklistItemRow(getSupabaseBrowserClient(), {
+          panoramaId,
+          name: item.name,
+          itemId: item.id,
+        }),
+      ),
+    )
+      .then(() => setLastError(null))
+      .catch(() => {
+        setChecklist(EMPTY_CONTRIBUTIONS);
+        setLastError("No se pudieron guardar los ítems iniciales. Agrégalos en el panel.");
       });
   }, []);
 
@@ -370,6 +485,13 @@ export function usePanoramaStore(
         previousPlace = EMPTY_PLACE_STATE;
         setPlace(previousPlace);
       }
+      // Espejo Colaborativo (RF-3): quien deja de ser «Voy» libera sus ítems
+      // de la lista de aportes en el mismo flujo.
+      let previousChecklist: ContributionItem[] | null = null;
+      if (leavesGoing && active.event.mode === "colaborativo" && checklist !== null) {
+        previousChecklist = checklist;
+        setChecklist(dropContributionClaims(checklist, attendeeId));
+      }
       setState((current) => ({
         ...current,
         panoramas: current.panoramas.map((panorama) =>
@@ -389,6 +511,15 @@ export function usePanoramaStore(
                 setPlace(previousPlace);
               }
             });
+            // Colaborativo: liberar en la base los ítems que él llevaba.
+            if (active.event.mode === "colaborativo") {
+              void releaseChecklistClaimsOfRow(getSupabaseBrowserClient(), panoramaId, attendeeId).catch(() => {
+                setLastError("No se pudieron liberar sus ítems de la lista. Intenta otra vez.");
+                if (previousChecklist !== null) {
+                  setChecklist(previousChecklist);
+                }
+              });
+            }
           }
         })
         .catch(() => {
@@ -409,7 +540,7 @@ export function usePanoramaStore(
           setLastError("No se pudo actualizar el voto. Intenta otra vez.");
         });
     },
-    [state, place],
+    [state, place, checklist],
   );
 
   /** Ajusta confirmedOrder local con el valor canónico que devolvió la base. */
@@ -580,6 +711,123 @@ export function usePanoramaStore(
     [state, place],
   );
 
+  /* ─────────────── Lista de aportes (creador, Colaborativo) ─────────────── */
+
+  const addChecklistItem = useCallback(
+    (name: string): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null || active.event.mode !== "colaborativo") {
+        return false;
+      }
+      const current = checklist ?? EMPTY_CONTRIBUTIONS;
+      const result = addCoreContributionItem(
+        current,
+        name,
+        newUuid(),
+        { kind: "creator" },
+        active.attendees,
+        active.event.maxCapacity,
+      );
+      if (!result.ok || result.items === undefined) {
+        setLastError(result.reason !== undefined ? getContributionRuleErrorMessage(result.reason) : "No se pudo agregar el ítem.");
+        return false;
+      }
+      const created = result.items[result.items.length - 1];
+      const previous = current;
+      setChecklist(result.items);
+      void insertChecklistItemRow(getSupabaseBrowserClient(), {
+        panoramaId: active.id,
+        name: created.name,
+        itemId: created.id,
+      })
+        .then(() => setLastError(null))
+        .catch(() => {
+          setChecklist(previous);
+          setLastError("No se pudo guardar el ítem. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, checklist],
+  );
+
+  const removeChecklistItem = useCallback(
+    (itemId: string): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null || active.event.mode !== "colaborativo") {
+        return false;
+      }
+      const current = checklist ?? EMPTY_CONTRIBUTIONS;
+      const result = removeCoreContributionItem(current, itemId, { kind: "creator" }, active.attendees, active.event.maxCapacity);
+      if (!result.ok || result.items === undefined) {
+        setLastError(result.reason !== undefined ? getContributionRuleErrorMessage(result.reason) : "No se pudo eliminar el ítem.");
+        return false;
+      }
+      const previous = current;
+      setChecklist(result.items);
+      void deleteChecklistItemRow(getSupabaseBrowserClient(), itemId)
+        .then(() => setLastError(null))
+        .catch(() => {
+          setChecklist(previous);
+          setLastError("No se pudo eliminar el ítem. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, checklist],
+  );
+
+  const claimCreatorChecklistItem = useCallback(
+    (itemId: string): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null || active.event.mode !== "colaborativo") {
+        return false;
+      }
+      const current = checklist ?? EMPTY_CONTRIBUTIONS;
+      const result = claimCoreContributionItem(current, itemId, { kind: "creator" }, active.attendees, active.event.maxCapacity);
+      if (!result.ok || result.items === undefined) {
+        setLastError(result.reason !== undefined ? getContributionRuleErrorMessage(result.reason) : "No se pudo tomar el ítem.");
+        return false;
+      }
+      const previous = current;
+      setChecklist(result.items);
+      void claimChecklistItemRow(getSupabaseBrowserClient(), {
+        itemId,
+        claimedByRef: CREATOR_CLAIM_REF,
+      })
+        .then(() => setLastError(null))
+        .catch(() => {
+          setChecklist(previous);
+          setLastError("No se pudo registrar tu ítem. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, checklist],
+  );
+
+  const releaseCreatorChecklistItem = useCallback(
+    (itemId: string): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null || active.event.mode !== "colaborativo") {
+        return false;
+      }
+      const current = checklist ?? EMPTY_CONTRIBUTIONS;
+      const result = releaseCoreContributionItem(current, itemId, { kind: "creator" }, active.attendees, active.event.maxCapacity);
+      if (!result.ok || result.items === undefined) {
+        setLastError(result.reason !== undefined ? getContributionRuleErrorMessage(result.reason) : "No se pudo liberar el ítem.");
+        return false;
+      }
+      const previous = current;
+      setChecklist(result.items);
+      void releaseChecklistItemRow(getSupabaseBrowserClient(), itemId, CREATOR_CLAIM_REF)
+        .then(() => setLastError(null))
+        .catch(() => {
+          setChecklist(previous);
+          setLastError("No se pudo liberar el ítem. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, checklist],
+  );
+
   const goToNewForm = useCallback(() => {
     setState((current) => ({ ...current, activeId: null }));
   }, []);
@@ -621,8 +869,13 @@ export function usePanoramaStore(
       removePlaceCandidate,
       castCreatorVote,
       declarePlaceMatch,
+      addChecklistItem,
+      removeChecklistItem,
+      claimCreatorChecklistItem,
+      releaseCreatorChecklistItem,
     },
     place,
+    checklist,
     dismissError,
   };
 }

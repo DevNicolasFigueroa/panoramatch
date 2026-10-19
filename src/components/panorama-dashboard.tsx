@@ -23,11 +23,14 @@ import AddFriendForm from "@/components/add-friend-form";
 import AttendeeSections from "@/components/attendee-sections";
 import FinancialPanel from "@/components/financial-panel";
 import PlaceVoteSection from "@/components/place-vote-section";
+import ContributionListSection from "@/components/contribution-list-section";
 import type { PanoramaStoreActions, PlaceVoteState } from "@/lib/use-panorama-store";
+import type { ContributionItem } from "@/core/contribution-list";
 
 export default function PanoramaDashboard({
   panorama,
   place,
+  checklist,
   actions,
   onAddFriend,
   onChangeStatus,
@@ -36,7 +39,9 @@ export default function PanoramaDashboard({
   panorama: SavedPanorama;
   /** Tablero de lugares (¿a dónde vamos?); null mientras carga o sin datos. */
   place: PlaceVoteState | null;
-  /** Acciones completas del store (incluye lugares en Social). */
+  /** Lista de aportes (¿qué llevar?); null mientras carga o en otros modos. */
+  checklist: ContributionItem[] | null;
+  /** Acciones completas del store (incluye lugares en Social y lista en Colaborativo). */
   actions: PanoramaStoreActions;
   onAddFriend: (name: string, status: Attendee["status"]) => boolean;
   onChangeStatus: (attendeeId: string, status: Attendee["status"]) => void;
@@ -107,6 +112,16 @@ export default function PanoramaDashboard({
       {/* Modo Social: votación de lugares (¿a dónde vamos?) */}
       {event.mode === "social" && (
         <PlaceVoteSection attendees={attendees} place={place} actions={actions} />
+      )}
+
+      {/* Modo Colaborativo: lista de aportes (¿qué hay que llevar?) */}
+      {event.mode === "colaborativo" && (
+        <ContributionListSection
+          allAttendees={allAttendees}
+          creatorName={event.creatorName}
+          checklist={checklist}
+          actions={actions}
+        />
       )}
 
       {/* Módulo de Confirmación Rápida */}

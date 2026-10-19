@@ -148,6 +148,11 @@ export interface CreateEventInput {
    */
   placeCandidates?: string[];
   /**
+   * Solo modo Colaborativo: nombres de ítems de la Lista de aportes (uno por
+   * línea, opcional, máx 10 y 40 caracteres según contribution-list).
+   */
+  checklistItems?: string[];
+  /**
    * Nombre de Google del creador de la sesión: se persiste para que panel,
    * enlace y tarjetas lo muestren. El store lo agrega, no el form.
    */

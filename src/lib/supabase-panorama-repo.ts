@@ -494,3 +494,19 @@ export async function releaseChecklistItemRow(
     throw new Error(error.message);
   }
 }
+
+/** Libera TODOS los reclamos de una referencia en un panorama (dejó de ir). */
+export async function releaseChecklistClaimsOfRow(
+  client: SupabaseClient,
+  panoramaId: string,
+  claimRef: string,
+): Promise<void> {
+  const { error } = await client
+    .from("checklist_items")
+    .update({ claimed_by_ref: null })
+    .eq("panorama_id", panoramaId)
+    .eq("claimed_by_ref", claimRef);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
