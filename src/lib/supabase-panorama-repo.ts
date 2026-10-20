@@ -15,6 +15,7 @@ import type {
 } from "@/core/types";
 import type { PlaceCandidate, PlaceVoteRecord } from "@/core/place-vote";
 import type { ContributionItem } from "@/core/contribution-list";
+import type { TeamAssignment, TeamSide, TeamVacancy, TeamsState } from "@/core/team-organizer";
 
 /** Filas de `public.panoramas`. */
 export interface PanoramaRow {
@@ -539,4 +540,218 @@ export async function releaseChecklistClaimsOfRow(
   if (error !== null) {
     throw new Error(error.message);
   }
+}
+
+/* ─────────────── Organizador de equipos (spec 003) ─────────────── */
+
+/** Filas de `public.team_members`. */
+export interface TeamMemberRow {
+  id: string;
+  panorama_id: string;
+  team: TeamSide;
+  /** 'creator' (organizador virtual) o el id de la fila `participants`. */
+  player_ref: string;
+  created_at: string;
+}
+
+/** Filas de `public.team_vacancies` (asiento que dejó un titular que se bajó). */
+export interface TeamVacancyRow {
+  id: string;
+  panorama_id: string;
+  team: TeamSide;
+  created_at: string;
+}
+
+/** Datos completos de equipos de un panorama Deportivo. */
+export interface TeamsData {
+  teamAName: string | null;
+  teamBName: string | null;
+  assignments: TeamAssignment[];
+  /** Vacantes de la más antigua a la más nueva (FIFO). */
+  vacancies: TeamVacancy[];
+}
+
+function mapMemberRow(row: TeamMemberRow): TeamAssignment {
+  return { playerRef: row.player_ref, team: row.team };
+}
+
+function mapVacancyRow(row: TeamVacancyRow): TeamVacancy {
+  return { team: row.team };
+}
+
+/** Lee nombres de equipos, asignaciones vigentes y vacantes FIFO. */
+export async function fetchTeamsData(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<TeamsData> {
+  const [membersRes, vacanciesRes, nameRes] = await Promise.all([
+    client
+      .from("team_members")
+      .select("*")
+      .eq("panorama_id", panoramaId)
+      .order("created_at", { ascending: true }),
+    client
+      .from("team_vacancies")
+      .select("*")
+      .eq("panorama_id", panoramaId)
+      .order("created_at", { ascending: true }),
+    client
+      .from("panoramas")
+      .select("team_a_name,team_b_name")
+      .eq("id", panoramaId)
+      .maybeSingle(),
+  ]);
+
+  if (membersRes.error !== null) {
+    throw new Error(membersRes.error.message);
+  }
+  if (vacanciesRes.error !== null) {
+    throw new Error(vacanciesRes.error.message);
+  }
+  if (nameRes.error !== null) {
+    throw new Error(nameRes.error.message);
+  }
+
+  const memberRows = (membersRes.data ?? []) as TeamMemberRow[];
+  const vacancyRows = (vacanciesRes.data ?? []) as TeamVacancyRow[];
+  const names = nameRes.data as { team_a_name: string | null; team_b_name: string | null } | null;
+  return {
+    teamAName: names?.team_a_name ?? null,
+    teamBName: names?.team_b_name ?? null,
+    assignments: memberRows.map(mapMemberRow),
+    vacancies: vacancyRows.map(mapVacancyRow),
+  };
+}
+
+/** Renombra un equipo en la base (solo el creador; RLS valida la sesión). */
+export async function updateTeamNameRow(
+  client: SupabaseClient,
+  panoramaId: string,
+  side: TeamSide,
+  name: string | null,
+): Promise<void> {
+  const column = side === "a" ? "team_a_name" : "team_b_name";
+  const { error } = await client
+    .from("panoramas")
+    .update({ [column]: name })
+    .eq("id", panoramaId);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Inserta una asignación nueva (creador; p. ej. desde el sorteo). */
+export async function insertTeamMemberRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; team: TeamSide; playerRef: string; memberId?: string },
+): Promise<TeamMemberRow> {
+  const { data, error } = await client
+    .from("team_members")
+    .insert({
+      ...(payload.memberId !== undefined ? { id: payload.memberId } : {}),
+      panorama_id: payload.panoramaId,
+      team: payload.team,
+      player_ref: payload.playerRef,
+    })
+    .select()
+    .single();
+  return assertData(data, error) as TeamMemberRow;
+}
+
+/** Mueve (o fija) el equipo de un jugador por su referencia (creador). */
+export async function upsertTeamMemberRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; team: TeamSide; playerRef: string },
+): Promise<void> {
+  const { error } = await client
+    .from("team_members")
+    .upsert(
+      { panorama_id: payload.panoramaId, team: payload.team, player_ref: payload.playerRef },
+      { onConflict: "panorama_id,player_ref" },
+    );
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Aplica el LOTE del sorteo en una sola escritura (creador). */
+export async function upsertTeamDrawRows(
+  client: SupabaseClient,
+  drawn: TeamAssignment[],
+  panoramaId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("team_members")
+    .upsert(
+      drawn.map((assignment) => ({
+        panorama_id: panoramaId,
+        team: assignment.team,
+        player_ref: assignment.playerRef,
+      })),
+      { onConflict: "panorama_id,player_ref" },
+    );
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Retira una asignación SIN dejar vacante (movimiento a dedo del creador). */
+export async function removeTeamMemberRow(
+  client: SupabaseClient,
+  panoramaId: string,
+  playerRef: string,
+): Promise<void> {
+  const { error } = await client
+    .from("team_members")
+    .delete()
+    .eq("panorama_id", panoramaId)
+    .eq("player_ref", playerRef);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Baja con asiento (RF-7): el titular deja su equipo y su asiento queda
+ * VACANTE en el servidor, en una sola operación (función segura).
+ */
+export async function releaseTeamSeatRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; playerRef: string },
+): Promise<void> {
+  const { error } = await client.rpc("release_team_seat", {
+    p_panorama_id: payload.panoramaId,
+    p_player_ref: payload.playerRef,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Herencia FIFO (RF-8): el titular nuevo hereda la vacante más antigua y
+ * devuelve el equipo heredado, o `null` cuando no hay vacantes («sin equipo»).
+ */
+export async function claimTeamVacancyRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; playerRef: string },
+): Promise<TeamSide | null> {
+  const { data, error } = await client.rpc("claim_team_vacancy", {
+    p_panorama_id: payload.panoramaId,
+    p_player_ref: payload.playerRef,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  return (data as TeamSide | null) ?? null;
+}
+
+/** Datos de equipos ya mapificados, listos para el estado del dominio. */
+export function mapTeamsDataToState(teams: TeamsData): TeamsState {
+  return {
+    teamAName: teams.teamAName,
+    teamBName: teams.teamBName,
+    assignments: teams.assignments,
+    vacancies: teams.vacancies,
+  };
 }

@@ -35,6 +35,6 @@ Memoria del proyecto entre sesiones. Máximo ~50 líneas: resume o elimina lo qu
 
 ## Próximos pasos
 - Pendientes del dueño en Dashboard: (1) Desactivar «Confirm email» (Auth → Providers); (2) activar «Leaked password protection»; (3) borrar usuarios de prueba en Auth Admin: `panoramatch.rls003@gmail.com` y `panoramatch.cre003@gmail.com` (+ el legacy `panoramatch.rls.test.*`).
-- SDD 003 en ejecución: **Fase 1 lista (T1 + T2)** — `src/core/team-organizer.ts` (sorteo determinista mulberry32 con semilla, mínimos 2, fijos mantenidos, vacante FIFO) + 27 tests → 99/99 verde, tsc limpio. Pendiente: **Fase 2** migración MCP (columnas `team_a_name`/`team_b_name` + tablas `team_members`/`team_vacancies`, RLS de dos vías) con orden del dueño.
+- **Fase 2 lista (T3–T5)** — migraciones MCP `team_organizer_tables`, `team_organizer_rls`, `team_organizer_seat_functions`, `team_organizer_privileges_fix` (22 en total); RLS de dos vías (creador domina; flujos de participante via `release_team_seat`/`claim_team_vacancy` SECURITY DEFINER con `skip locked`) probadas por REST con 3 cuentas (verdes); repo con `fetchTeamsData` + RPCs. Cuentas de prueba a borrar por el dueño en Auth Admin: `panoramatch.ts003a/b/c@gmail.com` (añadir a la lista pendiente). Pendiente: **Fase 3** (store/UI del Organizador, T6–T9) con orden del dueño.
 - Commit/push de los fixes pendientes (quórum, costo 0, login) y de la spec 003: SOLO con orden del dueño; la rama es `feat/003-modo-deportivo-equipos`.
 - Specs futuras: gastos por partida; Realtime para tableros.
