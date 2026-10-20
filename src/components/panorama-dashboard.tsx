@@ -11,6 +11,7 @@ import type { Attendee, SavedPanorama } from "@/core/types";
 import { formatPanoramaStartsAt } from "@/core/datetime-cl";
 import {
   classifyAttendees,
+  getGuestQuorumTarget,
   getMissingToQuorum,
   getQuorumLabel,
   getQuorumStatus,
@@ -54,23 +55,28 @@ export default function PanoramaDashboard({
     () => withCreatorAttendee(attendees, event.creatorName),
     [attendees, event.creatorName],
   );
-  // Tablero con el creador dentro (boleta y «Van»); el quórum del semáforo
-  // sigue midiendo solo a los invitados (un panorama no nace en verde).
+  // Tablero con el creador dentro (boleta y «Van»). El quórum del semáforo
+  // sigue midiendo solo a los invitados, pero el objetivo de asientos es
+  // el cupo menos el del organizador (que siempre va y ocupa uno).
   const classification = useMemo(
     () => classifyAttendees(allAttendees, event.maxCapacity),
     [allAttendees, event.maxCapacity],
+  );
+  const guestQuorumTarget = useMemo(
+    () => getGuestQuorumTarget(event.maxCapacity),
+    [event.maxCapacity],
   );
   const guestsTitularCount = useMemo(
     () => classifyAttendees(attendees, event.maxCapacity).titulars.length,
     [attendees, event.maxCapacity],
   );
   const quorum = useMemo(
-    () => getQuorumStatus(event.maxCapacity, guestsTitularCount),
-    [event.maxCapacity, guestsTitularCount],
+    () => getQuorumStatus(guestQuorumTarget, guestsTitularCount),
+    [guestQuorumTarget, guestsTitularCount],
   );
   const missingCount = useMemo(
-    () => getMissingToQuorum(event.maxCapacity, guestsTitularCount),
-    [event.maxCapacity, guestsTitularCount],
+    () => getMissingToQuorum(guestQuorumTarget, guestsTitularCount),
+    [guestQuorumTarget, guestsTitularCount],
   );
   const split = useMemo(
     () => splitCost(event.totalCostCLP, classification.titulars.length),

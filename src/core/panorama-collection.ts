@@ -19,6 +19,7 @@ import type {
 } from "./types";
 import {
   classifyAttendees,
+  getGuestQuorumTarget,
   getMissingToQuorum,
   getQuorumLabel,
   getQuorumStatus,
@@ -114,12 +115,14 @@ export function sortSavedPanoramas(
 export function buildSavedSummary(saved: SavedPanorama): SavedPanoramaSummary {
   const { event, attendees } = saved;
   // «Van» incluye al organizador (es «Voy» implícito); el quórum del
-  // semáforo sigue midiendo solo a los invitados.
+  // semáforo sigue midiendo solo a los invitados, con objetivo de asientos
+  // cupo − 1 (el organizador ocupa uno fijo).
   const compositeAttendees = withCreatorAttendee(attendees, event.creatorName);
   const titularCount = classifyAttendees(compositeAttendees, event.maxCapacity).titulars.length;
+  const guestQuorumTarget = getGuestQuorumTarget(event.maxCapacity);
   const guestsTitularCount = classifyAttendees(attendees, event.maxCapacity).titulars.length;
-  const quorum = getQuorumStatus(event.maxCapacity, guestsTitularCount);
-  const missingCount = getMissingToQuorum(event.maxCapacity, guestsTitularCount);
+  const quorum = getQuorumStatus(guestQuorumTarget, guestsTitularCount);
+  const missingCount = getMissingToQuorum(guestQuorumTarget, guestsTitularCount);
   return {
     id: saved.id,
     title: event.title,

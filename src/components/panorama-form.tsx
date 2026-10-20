@@ -62,7 +62,8 @@ export default function PanoramaForm({
       mode: mode as PanoramaMode,
       startsAt,
       maxCapacity: capacityText.trim() === "" ? null : Number(capacityText),
-      totalCostCLP: Number(costText),
+      // Costo opcional: vacío u omitido es «sin gasto» ($0); nunca negativo.
+      totalCostCLP: costText.trim() === "" ? 0 : Number(costText),
       // Social: candidatos iniciales, uno por línea (opcional; core los normaliza).
       placeCandidates:
         mode === "social"
@@ -318,8 +319,12 @@ function validate(
   }
 
   const costTrimmed = costText.trim();
-  if (costTrimmed === "" || !isValidCLPAmount(Number(costTrimmed))) {
-    errors.totalCostCLP = "Ingresa un costo entero en CLP (sin centavos, cero o más).";
+  // El costo puede ser 0 (o vacío: sin gasto), pero jamás negativo.
+  if (costTrimmed === "") {
+    // Vacío = sin costo; se guardará $0.
+    // (sin error)
+  } else if (!isValidCLPAmount(Number(costTrimmed))) {
+    errors.totalCostCLP = "El costo debe ser un entero en CLP, cero o más (no negativo).";
   }
 
   return Object.keys(errors).length === 0 ? null : errors;
@@ -329,9 +334,12 @@ function validate(
 function getFriendlyCostHint(costText: string): string {
   const trimmed = costText.trim();
   if (trimmed === "") {
-    return "Arriendo de cancha, presupuesto del asado…";
+    return "Opcional: déjalo vacío o en 0 si no hay gasto por dividir.";
   }
   const value = Number(trimmed);
+  if (value === 0) {
+    return "Sin costo por dividir.";
+  }
   return isValidCLPAmount(value) ? `Se dividirá como ${formatCLP(value)}` : "Debe ser un entero, sin decimales";
 }
 

@@ -16,6 +16,8 @@ import { splitCost } from "../currency-clp";
 import {
   classifyAttendees,
   getQuorumStatus,
+  getMissingToQuorum,
+  getGuestQuorumTarget,
   isDuplicateAttendeeName,
 } from "../quota-manager";
 import type { Attendee } from "../types";
@@ -125,6 +127,42 @@ describe("el quórum sigue midiendo solo a los invitados", () => {
     const compositeTitulars = classifyAttendees(composite, null).titulars.length;
     assert.equal(compositeTitulars, 1);
     assert.equal(getQuorumStatus(null, guestsTitulars), "pending");
+  });
+
+  test("el objetivo de asientos de invitados es cupo − 1 (el organizador ocupa uno)", () => {
+    assert.equal(getGuestQuorumTarget(2), 1);
+    assert.equal(getGuestQuorumTarget(5), 4);
+    assert.equal(getGuestQuorumTarget(1), 0);
+    assert.equal(getGuestQuorumTarget(null), null);
+  });
+
+  test("cupo 2 con la única invitada confirmada: semáforo verde, no «En camino»", () => {
+    // Caso «Salida» de producción: organizador fijo + Vanessa Voy = 2/2.
+    const guestTarget = getGuestQuorumTarget(2);
+    assert.equal(getQuorumStatus(guestTarget, 1), "ready");
+    assert.equal(getMissingToQuorum(guestTarget, 1), 0);
+  });
+
+  test("cupo 2 recién creado: pendiente hasta la primera confirmación", () => {
+    const guestTarget = getGuestQuorumTarget(2);
+    assert.equal(getQuorumStatus(guestTarget, 0), "pending");
+    assert.equal(getMissingToQuorum(guestTarget, 0), 1);
+  });
+
+  test("cupo 1 (solo cabe el organizador): armado de entrada", () => {
+    assert.equal(getQuorumStatus(getGuestQuorumTarget(1), 0), "ready");
+    assert.equal(getMissingToQuorum(getGuestQuorumTarget(1), 0), 0);
+  });
+
+  test("cupo 5 con dos invitados confirmados: «En camino» con faltan 2", () => {
+    const guestTarget = getGuestQuorumTarget(5);
+    assert.equal(getQuorumStatus(guestTarget, 2), "partial");
+    assert.equal(getMissingToQuorum(guestTarget, 2), 2);
+  });
+
+  test("sin cupo: verde con el primer invitado confirmado", () => {
+    assert.equal(getQuorumStatus(getGuestQuorumTarget(null), 1), "ready");
+    assert.equal(getQuorumStatus(getGuestQuorumTarget(null), 0), "pending");
   });
 });
 

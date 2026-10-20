@@ -27,7 +27,7 @@ import {
   type GuestIdentity,
 } from "@/core/guest-participation";
 import { formatPanoramaStartsAt } from "@/core/datetime-cl";
-import { getQuorumLabel, getQuorumStatus, getMissingToQuorum } from "@/core/quota-manager";
+import { getGuestQuorumTarget, getQuorumLabel, getQuorumStatus, getMissingToQuorum } from "@/core/quota-manager";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import { getGuestIdentity, clearGuestIdentity } from "@/lib/guest-identity";
 import { useAuthSession } from "@/lib/use-auth-session";
@@ -122,30 +122,35 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     [panorama],
   );
   // Tablero con el organizador en «Van»; el quórum sigue midiendo solo
-  // a los invitados (memos de más abajo usan `panorama.attendees` directa).
+  // a los invitados, con objetivo de asientos cupo−1 (el organizador
+  // ocupa uno fijo). Memos de más abajo usan `panorama.attendees` directa.
   const classification =
     allAttendees === null || panorama === null
       ? null
       : classifyAttendees(allAttendees, panorama.event.maxCapacity);
+  const guestQuorumTarget = useMemo(
+    () => (panorama === null ? null : getGuestQuorumTarget(panorama.event.maxCapacity)),
+    [panorama],
+  );
   const quorum = useMemo(
     () =>
       panorama === null
         ? null
         : getQuorumStatus(
-            panorama.event.maxCapacity,
+            guestQuorumTarget,
             classifyAttendees(panorama.attendees, panorama.event.maxCapacity).titulars.length,
           ),
-    [panorama],
+    [panorama, guestQuorumTarget],
   );
   const missingCount = useMemo(
     () =>
       panorama === null
         ? 0
         : getMissingToQuorum(
-            panorama.event.maxCapacity,
+            guestQuorumTarget,
             classifyAttendees(panorama.attendees, panorama.event.maxCapacity).titulars.length,
           ),
-    [panorama],
+    [panorama, guestQuorumTarget],
   );
 
   /** El usuario entra a la lista con el estado elegido y SU cuenta. */

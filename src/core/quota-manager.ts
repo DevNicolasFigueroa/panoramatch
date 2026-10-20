@@ -134,22 +134,37 @@ export function classifyAttendees(
 }
 
 /**
- * Evalúa el Semáforo de Quórum:
- * - pending: nadie ha confirmado aún.
- * - partial: hay confirmados, pero el cupo aún no se llena (solo aplica con cupo).
- * - ready: cupo completo o, en panoramas sin cupo, al menos un confirmado.
+ * Asientos que quedan para los INVITADOS: el organizador ocupa uno fijo
+ * (siempre «Voy», orden 0). Sin cupo devuelve null (cuota libre).
+ */
+export function getGuestQuorumTarget(maxCapacity: number | null): number | null {
+  return maxCapacity === null ? null : Math.max(0, maxCapacity - 1);
+}
+
+/**
+ * Evalúa el Semáforo de Quórum sobre los invitados:
+ * - pending: nadie ha confirmado aún (el panorama no nace en verde).
+ * - partial: hay confirmados, pero el cupo de invitados aún no se llena
+ *   (solo aplica cuando queda más de un asiento después del organizador).
+ * - ready: cupo de invitados completo (incluido el caso de que el
+ *   organizador sea el único asiento), o, sin cupo, al menos un confirmado.
+ *
+ * `guestTarget` es lo que devuelve `getGuestQuorumTarget`.
  */
 export function getQuorumStatus(
-  maxCapacity: number | null,
-  titularCount: number,
+  guestTarget: number | null,
+  guestTitularCount: number,
 ): QuorumStatus {
-  if (titularCount <= 0) {
-    return "pending";
-  }
-  if (maxCapacity === null) {
+  if (guestTarget === 0) {
     return "ready";
   }
-  return titularCount >= maxCapacity ? "ready" : "partial";
+  if (guestTitularCount <= 0) {
+    return "pending";
+  }
+  if (guestTarget === null) {
+    return "ready";
+  }
+  return guestTitularCount >= guestTarget ? "ready" : "partial";
 }
 
 /** Helpers de presentación del semáforo (textos de la UI, en español). */
@@ -165,15 +180,15 @@ export function getQuorumLabel(status: QuorumStatus, missingCount: number): stri
   }
 }
 
-/** Cuántos confirmados faltan para armar el panorama (0 si ya está armado). */
+/** Cuántos invitados faltan para armar el panorama (0 si ya está armado). */
 export function getMissingToQuorum(
-  maxCapacity: number | null,
-  titularCount: number,
+  guestTarget: number | null,
+  guestTitularCount: number,
 ): number {
-  if (maxCapacity === null || titularCount >= maxCapacity) {
+  if (guestTarget === null || guestTitularCount >= guestTarget) {
     return 0;
   }
-  return maxCapacity - titularCount;
+  return guestTarget - guestTitularCount;
 }
 
 /** Crea el evento desde los datos ya validados del formulario. */
