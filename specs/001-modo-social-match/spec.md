@@ -13,12 +13,12 @@ Objetivo: reemplazar el "¿dónde vamos?" interminable por una votación simple,
 
 ## Usuarios / actores
 
-| Actor | Rol |
-|---|---|
-| **Creador** (autenticado) | Añade/elimina candidatos, vota por sí, **vota a nombre de** los confirmados que él anotó (delegación), declara el Match y desempata. |
-| **Confirmado "Voy"** (participante del panorama) | Propone candidatos y vota desde su vista (cuenta propia o enlace). |
-| **Invitado externo sin cuenta** | Si su estado es "Voy": propone y vota desde el enlace. Cualquier otro estado del enlace: solo lectura. |
-| **Espectadores** (En duda / No puedo / invitados sin estado "Voy") | Ven candidatos, conteos exactos y el estado del Match; no votan. |
+| Actor                                                              | Rol                                                                                                                                  |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Creador** (autenticado)                                          | Añade/elimina candidatos, vota por sí, **vota a nombre de** los confirmados que él anotó (delegación), declara el Match y desempata. |
+| **Confirmado "Voy"** (participante del panorama)                   | Propone candidatos y vota desde su vista (cuenta propia o enlace).                                                                   |
+| **Invitado externo sin cuenta**                                    | Si su estado es "Voy": propone y vota desde el enlace. Cualquier otro estado del enlace: solo lectura.                               |
+| **Espectadores** (En duda / No puedo / invitados sin estado "Voy") | Ven candidatos, conteos exactos y el estado del Match; no votan.                                                                     |
 
 ## Historias de usuario
 
