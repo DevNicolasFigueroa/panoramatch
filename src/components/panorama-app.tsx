@@ -11,9 +11,15 @@ import { useAuthSession } from "@/lib/use-auth-session";
 import ThemeToggle from "@/components/theme-toggle";
 import HomeView from "@/components/home-view";
 import PanoramaDashboard from "@/components/panorama-dashboard";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+
+import { initialsFromName } from "@/core/initials";
 
 export default function PanoramaApp() {
   const { user, isAuthReady, signOut } = useAuthSession();
+  const router = useRouter();
+  const [isConfirmingSignOut, setIsConfirmingSignOut] = useState(false);
   const {
     isLoading,
     lastError,
@@ -27,6 +33,13 @@ export default function PanoramaApp() {
 
   const isReady = isAuthReady && user !== null && !isLoading;
 
+  const handleCloseSession = async () => {
+    await signOut();
+    setIsConfirmingSignOut(false);
+    router.replace("/login");
+    router.refresh();
+  };
+
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-5 px-4 pt-7 pb-12 sm:max-w-lg">
       {/* Cabecera: marca centrada y tema a la derecha */}
@@ -39,17 +52,58 @@ export default function PanoramaApp() {
         <ThemeToggle />
       </header>
 
-      {/* Saludo + Salir (solo con sesión) */}
+      {/* Identidad con sesión: avatar o iniciales, nombre, correo y Salir */}
       {user !== null && (
-        <div className="-mt-3 flex items-center justify-between px-1 text-xs text-ink-soft">
-          <span>Hola, {user.displayName}</span>
-          <button
-            type="button"
-            onClick={() => void signOut()}
-            className="font-semibold text-ink transition hover:text-baja"
-          >
-            Salir
-          </button>
+        <div className="rounded-2xl border border-ink/15 bg-elev px-3.5 py-2.5">
+          <div className="flex items-center gap-3">
+            {user.avatarUrl !== null ? (
+              <img
+                src={user.avatarUrl}
+                alt="Tu foto de perfil"
+                className="h-9 w-9 shrink-0 rounded-full border border-ink/20 object-cover"
+              />
+            ) : (
+              <span
+                aria-hidden="true"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-ink/20 bg-cancha-soft font-display text-xs font-bold text-cancha"
+              >
+                {initialsFromName(user.displayName)}
+              </span>
+            )}
+            <div className="min-w-0 flex-1 leading-tight">
+              <p className="truncate text-sm font-bold text-ink">{user.displayName}</p>
+              <p className="truncate text-xs text-ink-soft">
+                {user.email ?? "Cuenta de PanoraMatch"}
+              </p>
+            </div>
+            {isConfirmingSignOut ? (
+              <div className="flex shrink-0 items-center gap-1.5 text-xs" role="group" aria-label="Confirmar cierre de sesión">
+                <span className="text-ink-soft">¿Salir?</span>
+                <button
+                  type="button"
+                  onClick={() => void handleCloseSession()}
+                  className="rounded-lg border border-baja/50 px-2 py-1.5 font-semibold text-baja transition hover:bg-baja-soft"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmingSignOut(false)}
+                  className="rounded-lg border border-ink/20 px-2 py-1.5 font-semibold text-ink transition hover:border-ink/60"
+                >
+                  Quedarme
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsConfirmingSignOut(true)}
+                className="shrink-0 rounded-lg border border-ink/20 px-2.5 py-1.5 text-xs font-semibold text-ink transition hover:border-baja hover:text-baja"
+              >
+                Salir
+              </button>
+            )}
+          </div>
         </div>
       )}
 

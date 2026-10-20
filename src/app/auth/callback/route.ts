@@ -35,7 +35,13 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   if (errorParam !== null || code === null) {
     const safeNext = resolveInternalRedirectPath(searchParams.get("next"));
-    return NextResponse.redirect(`${origin}/login?error=auth${safeNext !== null ? `&next=${encodeURIComponent(safeNext)}` : ""}`);
+    // Propagamos el código del proveedor (p. ej. access_denied al cancelar
+    // el consentimiento) solo si es un identificador limpio; lo demás, genérico.
+    const loginError =
+      errorParam !== null && /^[a-zA-Z0-9_]{1,60}$/.test(errorParam) ? errorParam : "auth";
+    return NextResponse.redirect(
+      `${origin}/login?error=${loginError}${safeNext !== null ? `&next=${encodeURIComponent(safeNext)}` : ""}`,
+    );
   }
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
