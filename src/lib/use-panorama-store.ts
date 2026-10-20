@@ -56,6 +56,19 @@ import {
   removeContributionItem as removeCoreContributionItem,
   type ContributionItem,
 } from "@/core/contribution-list";
+import {
+  buildTitularPlayers,
+  claimVacancyOnPromotion,
+  createEmptyTeamsState,
+  drawTeams as drawCoreTeams,
+  dropPlayerFromTeams,
+  getTeamOrganizerErrorMessage,
+  movePlayer as moveCorePlayer,
+  renameTeam as renameCoreTeam,
+  type TeamPlayer,
+  type TeamSide,
+  type TeamsState,
+} from "@/core/team-organizer";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import {
   deletePanoramaRow,
@@ -66,6 +79,13 @@ import {
   ensureOwnProfileRow,
   fetchCreatorPanoramas,
   fetchPlaceData,
+  fetchTeamsData,
+  releaseTeamSeatRow,
+  claimTeamVacancyRow,
+  removeTeamMemberRow,
+  updateTeamNameRow,
+  upsertTeamDrawRows,
+  upsertTeamMemberRow,
   declareMatchRow,
   insertChecklistItemRow,
   insertPanoramaRow,
@@ -109,6 +129,12 @@ export interface PanoramaStoreActions {
   claimCreatorChecklistItem: (itemId: string) => boolean;
   /** El creador libera un ítem que él lleva. Devuelve false si lo bloquean las reglas. */
   releaseCreatorChecklistItem: (itemId: string) => boolean;
+  /** Sorteo equilibrado (Deportivo): reparte solo los titulares sin equipo. Devuelve false si lo bloquean las reglas. */
+  drawTeams: () => boolean;
+  /** Mueve un titular de equipo el creador; `null` lo deja «sin equipo». */
+  moveTeamPlayer: (playerRef: string, target: TeamSide | null) => boolean;
+  /** Renombra un equipo (creador, ≤30 caracteres, único). Devuelve false si lo bloquean las reglas. */
+  renameTeam: (side: TeamSide, rawName: string) => boolean;
 }
 
 /** Estado vivo del tablero de lugares del panorama activo (modo Social). */
@@ -126,6 +152,21 @@ const EMPTY_PLACE_STATE: PlaceVoteState = {
 
 const EMPTY_CONTRIBUTIONS: ContributionItem[] = [];
 
+const EMPTY_TEAMS: TeamsState = createEmptyTeamsState();
+
+/** Titulares reales del panorama activo (con el organizador virtual n.º 0). */
+function titularPlayersOf(active: SavedPanorama): TeamPlayer[] {
+  return buildTitularPlayers(
+    withCreatorAttendee(active.attendees, active.event.creatorName),
+    active.event.maxCapacity,
+  );
+}
+
+/** Semilla del sorteo: la genera la orquestación en el toque; el núcleo la recibe. */
+function createDrawSeed(): number {
+  return Math.floor(Math.random() * 4294967296) >>> 0;
+}
+
 export interface PanoramaStore {
   state: PanoramaStoreState;
   /** true mientras se carga la lista desde Supabase. */
@@ -140,6 +181,8 @@ export interface PanoramaStore {
   place: PlaceVoteState | null;
   /** Lista de aportes del panorama activo Colaborativo; null mientras carga. */
   checklist: ContributionItem[] | null;
+  /** Estado de equipos del panorama activo Deportivo; null mientras carga u otro modo. */
+  teams: TeamsState | null;
   actions: PanoramaStoreActions;
   /** Limpia el mensaje de error visible. */
   dismissError: () => void;
@@ -209,6 +252,7 @@ export function usePanoramaStore(
   const [lastError, setLastError] = useState<string | null>(null);
   const [place, setPlace] = useState<PlaceVoteState | null>(null);
   const [checklist, setChecklist] = useState<ContributionItem[] | null>(null);
+  const [teams, setTeams] = useState<TeamsState | null>(null);
 
   // Carga inicial: solo los panoramas del creador con sesión.
   useEffect(() => {
@@ -314,6 +358,40 @@ export function usePanoramaStore(
       cancelled = true;
     };
   }, [activeIdForChecklist, activeModeForChecklist]);
+
+  // Carga de equipos del panorama activo (solo Deportivo).
+  const activeIdForTeams = getActivePanorama(state)?.id ?? null;
+  const activeModeForTeams = getActivePanorama(state)?.event.mode ?? null;
+  useEffect(() => {
+    if (activeIdForTeams === null || activeModeForTeams !== "deportivo") {
+      setTeams(null);
+      return;
+    }
+    let cancelled = false;
+    setTeams(null);
+    const run = async () => {
+      try {
+        const data = await fetchTeamsData(getSupabaseBrowserClient(), activeIdForTeams);
+        if (!cancelled) {
+          setTeams({
+            teamAName: data.teamAName,
+            teamBName: data.teamBName,
+            assignments: data.assignments,
+            vacancies: data.vacancies,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setTeams(EMPTY_TEAMS);
+          setLastError("No se pudo cargar el reparto de equipos. Intenta recargar.");
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeIdForTeams, activeModeForTeams]);
 
   const createEvent = useCallback(
     (input: CreateEventInput): boolean => {
@@ -501,6 +579,23 @@ export function usePanoramaStore(
         previousChecklist = checklist;
         setChecklist(dropContributionClaims(checklist, attendeeId));
       }
+      // Espejo Deportivo (RF-7/RF-8): al bajar, su asiento queda vacante;
+      // al subir un suplente, hereda la vacante más antigua (o «sin equipo»).
+      const risesToGoing = status === "going" && previous.status !== "going";
+      let previousTeams: TeamsState | null = null;
+      if (active.event.mode === "deportivo" && teams !== null && (leavesGoing || risesToGoing)) {
+        previousTeams = teams;
+        if (leavesGoing) {
+          setTeams(dropPlayerFromTeams(teams, attendeeId));
+        } else {
+          // Titulares de la reclasificación PROSPECTIVA: el jugador ya es «Voy».
+          const prospectiveTitulars = titularPlayersOf({
+            ...active,
+            attendees: setAttendeeStatus(active.attendees, attendeeId, status),
+          });
+          setTeams(claimVacancyOnPromotion(teams, attendeeId, prospectiveTitulars).teams);
+        }
+      }
       setState((current) => ({
         ...current,
         panoramas: current.panoramas.map((panorama) =>
@@ -529,6 +624,45 @@ export function usePanoramaStore(
                 }
               });
             }
+            // Deportivo: su asiento de equipo queda VACANTE en el servidor.
+            if (active.event.mode === "deportivo") {
+              void releaseTeamSeatRow(getSupabaseBrowserClient(), { panoramaId, playerRef: attendeeId })
+                .then(() => setLastError(null))
+                .catch(() => {
+                  setLastError("No se pudo dejar vacante su asiento de equipo. Intenta otra vez.");
+                  if (previousTeams !== null) {
+                    setTeams(previousTeams);
+                  }
+                });
+            }
+          } else if (active.event.mode === "deportivo" && risesToGoing) {
+            // Deportivo: el titular nuevo hereda la vacante FIFO en el servidor;
+            // si la base eligió otra vacante (carrera), la nube manda.
+            void claimTeamVacancyRow(getSupabaseBrowserClient(), { panoramaId, playerRef: attendeeId })
+              .then((inheritedSide) => {
+                setLastError(null);
+                void fetchTeamsData(getSupabaseBrowserClient(), panoramaId)
+                  .then((fresh) => {
+                    setTeams({
+                      teamAName: fresh.teamAName,
+                      teamBName: fresh.teamBName,
+                      assignments: fresh.assignments,
+                      vacancies: fresh.vacancies,
+                    });
+                  })
+                  .catch(() => {
+                    /* La herencia ya está aplicada en la base; el desacuerdo local se resuelve al recargar. */
+                    if (inheritedSide !== null) {
+                      setLastError("No se pudo sincronizar el reparto de equipos. Recarga la página.");
+                    }
+                  });
+              })
+              .catch(() => {
+                setLastError("No se pudo heredar el asiento de equipo. Intenta otra vez.");
+                if (previousTeams !== null) {
+                  setTeams(previousTeams);
+                }
+              });
           }
         })
         .catch(() => {
@@ -549,7 +683,7 @@ export function usePanoramaStore(
           setLastError("No se pudo actualizar el voto. Intenta otra vez.");
         });
     },
-    [state, place, checklist],
+    [state, place, checklist, teams],
   );
 
   /** Ajusta confirmedOrder local con el valor canónico que devolvió la base. */
@@ -837,6 +971,105 @@ export function usePanoramaStore(
     [state, checklist],
   );
 
+  /* ─────────────── Organizador de equipos (creador, Deportivo) ─────────────── */
+
+  const drawTeams = useCallback((): boolean => {
+    const active = getActivePanorama(state);
+    if (active === null || active.event.mode !== "deportivo") {
+      return false;
+    }
+    const current = teams ?? EMPTY_TEAMS;
+    const result = drawCoreTeams(current, titularPlayersOf(active), createDrawSeed());
+    if (!result.ok || result.teams === undefined) {
+      setLastError(
+        result.reason !== undefined
+          ? getTeamOrganizerErrorMessage(result.reason)
+          : "No se pudo sortear los equipos.",
+      );
+      return false;
+    }
+    const previous = current;
+    setTeams(result.teams);
+    void upsertTeamDrawRows(getSupabaseBrowserClient(), result.drawn ?? [], active.id)
+      .then(() => setLastError(null))
+      .catch(() => {
+        setTeams(previous);
+        setLastError("No se pudo guardar el sorteo. Intenta otra vez.");
+      });
+    return true;
+  }, [state, teams]);
+
+  const moveTeamPlayer = useCallback(
+    (playerRef: string, target: TeamSide | null): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null || active.event.mode !== "deportivo") {
+        return false;
+      }
+      const current = teams ?? EMPTY_TEAMS;
+      const result = moveCorePlayer(current, playerRef, target, titularPlayersOf(active));
+      if (!result.ok || result.teams === undefined) {
+        setLastError(
+          result.reason !== undefined
+            ? getTeamOrganizerErrorMessage(result.reason)
+            : "No se pudo mover al jugador.",
+        );
+        return false;
+      }
+      const previous = current;
+      setTeams(result.teams);
+      void (target === null
+        ? removeTeamMemberRow(getSupabaseBrowserClient(), active.id, playerRef)
+        : upsertTeamMemberRow(getSupabaseBrowserClient(), {
+            panoramaId: active.id,
+            team: target,
+            playerRef,
+          })
+      )
+        .then(() => setLastError(null))
+        .catch(() => {
+          setTeams(previous);
+          setLastError("No se pudo guardar el cambio de equipo. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, teams],
+  );
+
+  const renameTeamAction = useCallback(
+    (side: TeamSide, rawName: string): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null || active.event.mode !== "deportivo") {
+        return false;
+      }
+      const current = teams ?? EMPTY_TEAMS;
+      const result = renameCoreTeam(current, side, rawName);
+      if (!result.ok || result.teams === undefined) {
+        setLastError(
+          result.reason !== undefined
+            ? getTeamOrganizerErrorMessage(result.reason)
+            : "No se pudo renombrar el equipo.",
+        );
+        return false;
+      }
+      const previous = current;
+      setTeams(result.teams);
+      // El núcleo normalizó el nombre: eso mismo es lo que queda en la base.
+      void updateTeamNameRow(
+        getSupabaseBrowserClient(),
+        active.id,
+        side,
+        (side === "a" ? result.teams.teamAName : result.teams.teamBName) ?? null,
+      )
+        .then(() => setLastError(null))
+        .catch(() => {
+          setTeams(previous);
+          setLastError("No se pudo guardar el nombre del equipo. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, teams],
+  );
+
   const goToNewForm = useCallback(() => {
     setState((current) => ({ ...current, activeId: null }));
   }, []);
@@ -882,9 +1115,13 @@ export function usePanoramaStore(
       removeChecklistItem,
       claimCreatorChecklistItem,
       releaseCreatorChecklistItem,
+      drawTeams,
+      moveTeamPlayer,
+      renameTeam: renameTeamAction,
     },
     place,
     checklist,
+    teams,
     dismissError,
   };
 }

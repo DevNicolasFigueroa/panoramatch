@@ -35,12 +35,15 @@ import {
   fetchPanoramaById,
   insertParticipantRow,
   mapParticipantRowToAttendee,
+  releaseTeamSeatRow,
+  claimTeamVacancyRow,
   updateParticipantStatus,
 } from "@/lib/supabase-panorama-repo";
 import ThemeToggle from "@/components/theme-toggle";
 import QuorumSemaphore from "@/components/quorum-semaphore";
 import GuestPlaceVote from "@/components/guest-place-vote";
 import GuestContributionList from "@/components/guest-contribution-list";
+import GuestTeamOrganizer from "@/components/guest-team-organizer";
 import { MODE_EMOJI, MODE_STYLES, STATUS_OPTIONS } from "@/components/ui-theme";
 
 const SPLASH = (
@@ -78,6 +81,8 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isAdopting, setIsAdopting] = useState(false);
+  // Bump para releer los equipos sorteados tras bajar/subir de «Voy».
+  const [teamsRefreshKey, setTeamsRefreshKey] = useState(0);
 
   const canLoad = isAuthReady && user !== null;
 
@@ -259,6 +264,36 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
                 ),
               },
         );
+        // Espejo Deportivo (RF-7/RF-8): tu propia fila deja VACANTE su asiento
+        // al bajar; al subir de suplente hereda la vacante más antigua (FIFO).
+        const previousStatus = ownAttendee.status;
+        const leavesGoing = previousStatus === "going" && status !== "going";
+        const risesToGoing = status === "going" && previousStatus !== "going";
+        if (panorama.event.mode === "deportivo" && leavesGoing) {
+          try {
+            await releaseTeamSeatRow(getSupabaseBrowserClient(), {
+              panoramaId: panorama.id,
+              playerRef: ownAttendee.id,
+            });
+            setTeamsRefreshKey((key) => key + 1);
+          } catch {
+            setError(
+              "Tu respuesta se guardó, pero no se pudo dejar vacante tu asiento de equipo. Avisa al organizador.",
+            );
+          }
+        } else if (panorama.event.mode === "deportivo" && risesToGoing) {
+          try {
+            await claimTeamVacancyRow(getSupabaseBrowserClient(), {
+              panoramaId: panorama.id,
+              playerRef: ownAttendee.id,
+            });
+            setTeamsRefreshKey((key) => key + 1);
+          } catch {
+            setError(
+              "Tu respuesta se guardó, pero no se pudo heredar el asiento de equipo. Intenta otra vez.",
+            );
+          }
+        }
       } catch {
         setPanorama(previousPanorama);
         setError("No se pudo actualizar tu respuesta. Intenta otra vez.");
@@ -426,6 +461,11 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
           ownParticipantId={ownAttendee?.id ?? null}
           ownStatus={ownAttendee?.status ?? null}
         />
+      )}
+
+      {/* Organizador de equipos (modo Deportivo): reparto público, solo lectura */}
+      {event.mode === "deportivo" && (
+        <GuestTeamOrganizer panorama={panorama} refreshKey={teamsRefreshKey} />
       )}
 
       {/* Tablero (solo lectura para invitados: nadie toca la fila ajena) */}

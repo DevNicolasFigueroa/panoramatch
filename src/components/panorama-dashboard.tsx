@@ -25,13 +25,16 @@ import AttendeeSections from "@/components/attendee-sections";
 import FinancialPanel from "@/components/financial-panel";
 import PlaceVoteSection from "@/components/place-vote-section";
 import ContributionListSection from "@/components/contribution-list-section";
+import TeamOrganizerPanel from "@/components/team-organizer-panel";
 import type { PanoramaStoreActions, PlaceVoteState } from "@/lib/use-panorama-store";
 import type { ContributionItem } from "@/core/contribution-list";
+import { buildTitularPlayers, type TeamsState } from "@/core/team-organizer";
 
 export default function PanoramaDashboard({
   panorama,
   place,
   checklist,
+  teams,
   actions,
   onAddFriend,
   onChangeStatus,
@@ -42,7 +45,9 @@ export default function PanoramaDashboard({
   place: PlaceVoteState | null;
   /** Lista de aportes (¿qué llevar?); null mientras carga o en otros modos. */
   checklist: ContributionItem[] | null;
-  /** Acciones completas del store (incluye lugares en Social y lista en Colaborativo). */
+  /** Equipos del modo Deportivo; null mientras carga o en otros modos. */
+  teams: TeamsState | null;
+  /** Acciones completas del store (incluye lugares, lista y equipos). */
   actions: PanoramaStoreActions;
   onAddFriend: (name: string, status: Attendee["status"]) => boolean;
   onChangeStatus: (attendeeId: string, status: Attendee["status"]) => void;
@@ -126,6 +131,16 @@ export default function PanoramaDashboard({
           allAttendees={allAttendees}
           creatorName={event.creatorName}
           checklist={checklist}
+          actions={actions}
+        />
+      )}
+
+      {/* Modo Deportivo: organizador de equipos (sortear, mover, renombrar) */}
+      {event.mode === "deportivo" && (
+        <TeamOrganizerPanel
+          teams={teams}
+          titularPlayers={buildTitularPlayers(allAttendees, event.maxCapacity)}
+          isOrganizer
           actions={actions}
         />
       )}
