@@ -1,6 +1,6 @@
 # Spec 003 — Modo Deportivo: Organizador de Equipos
 
-**Estado:** borrador (v0.2, 2026-10-20) · Decisiones del dueño integradas en las preguntas del borrador: sorteo/movimiento **solo del creador**, el sorteo **mantiene a los fijos** y reparte a los libres, el suplente que sube **hereda el asiento vaciente (más antigua, FIFO)**, módulo desde **2 titulares**, equipos **«Equipo A» vs «Equipo B»** renombrables **en cualquier momento y solo por el creador** (máximo 30 caracteres), y el reparto **persiste en la nube** como la asistencia. Ver también `docs/constitution.md`.
+**Estado:** implementado (v0.2, 2026-10-20) · Decisiones del dueño integradas en las preguntas del borrador: sorteo/movimiento **solo del creador**, el sorteo **mantiene a los fijos** y reparte a los libres, el suplente que sube **hereda el asiento vaciente (más antigua, FIFO)**, módulo desde **2 titulares**, equipos **«Equipo A» vs «Equipo B»** renombrables **en cualquier momento y solo por el creador** (máximo 30 caracteres), y el reparto **persiste en la nube** como la asistencia. Ver también `docs/constitution.md`. T1–T9 en `tasks.md` completados; verificación final T10 en verde (tests 99/99, `tsc --noEmit` limpio, build EXIT=0, smoke 375px en dos rondas).
 
 **Depende de:** constitución (`docs/constitution.md`) y las reglas vigentes: creador «Voy» implícito (titular de orden 0, ocupa cupo), titulares = primeros «Voy» por orden de confirmación, Lista de Espera para los sobrantes, modo Deportivo exige cupo mínimo de 2, y auth universal (crear/gestionar exige sesión).
 

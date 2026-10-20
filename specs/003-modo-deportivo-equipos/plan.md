@@ -1,6 +1,6 @@
 # Plan 003 — Modo Deportivo: Organizador de Equipos
 
-**Estado:** borrador (v0.1, 2026-10-20) — el «cómo» que implementa `specs/003-modo-deportivo-equipos/spec.md` (v0.2, pendiente de aprobación explícita del dueño).
+**Estado:** implementado (v0.1, 2026-10-20) — el «cómo» que implementa `specs/003-modo-deportivo-equipos/spec.md` (v0.2). Fases 1–3 completadas y verificadas (T1–T10 en verde); el WARN de definer en las RPC de asientos es intencional (mismo patrón de la adopción de filas 001).
 
 ## Enfoque (por capas, de adentro hacia afuera)
 
