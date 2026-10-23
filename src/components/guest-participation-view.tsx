@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import type { AttendanceStatus, SavedPanorama } from "@/core/types";
 import { classifyAttendees } from "@/core/quota-manager";
 import { withCreatorAttendee } from "@/core/creator-attendee";
+import { createEmptyPaymentsState, type PaymentsState } from "@/core/payment-treasury";
 import {
   getGuestParticipationErrorMessage,
   getOwnAttendeeByUserId,
@@ -32,11 +33,14 @@ import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import { getGuestIdentity, clearGuestIdentity } from "@/lib/guest-identity";
 import { useAuthSession } from "@/lib/use-auth-session";
 import {
+  claimSelfTransferRow,
   fetchPanoramaById,
+  fetchPaymentsState,
   insertParticipantRow,
   mapParticipantRowToAttendee,
   releaseTeamSeatRow,
   claimTeamVacancyRow,
+  retractSelfTransferRow,
   updateParticipantStatus,
 } from "@/lib/supabase-panorama-repo";
 import ThemeToggle from "@/components/theme-toggle";
@@ -44,6 +48,7 @@ import QuorumSemaphore from "@/components/quorum-semaphore";
 import GuestPlaceVote from "@/components/guest-place-vote";
 import GuestContributionList from "@/components/guest-contribution-list";
 import GuestTeamOrganizer from "@/components/guest-team-organizer";
+import PaymentTreasuryPanel from "@/components/payment-treasury-panel";
 import { MODE_EMOJI, MODE_STYLES, STATUS_OPTIONS } from "@/components/ui-theme";
 
 const SPLASH = (
@@ -83,6 +88,10 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
   const [isAdopting, setIsAdopting] = useState(false);
   // Bump para releer los equipos sorteados tras bajar/subir de «Voy».
   const [teamsRefreshKey, setTeamsRefreshKey] = useState(0);
+  // Estado de tesorería del enlace (solo lectura + la marca propia, RF-11).
+  const [payments, setPayments] = useState<PaymentsState | null>(null);
+  const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
+  const [isSelfPaymentBusy, setIsSelfPaymentBusy] = useState(false);
 
   const canLoad = isAuthReady && user !== null;
 
@@ -110,6 +119,33 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     };
     void run();
   }, [panoramaId, canLoad]);
+
+  // Carga del tablero de pagos (los 3 modos): se repite con el bump de la
+  // marca propia («Ya transferí» / retracto) para releer las marcas.
+  const loadedPanoramaId = panorama?.id ?? null;
+  useEffect(() => {
+    if (loadedPanoramaId === null) {
+      setPayments(null);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const loaded = await fetchPaymentsState(getSupabaseBrowserClient(), loadedPanoramaId);
+        if (!cancelled) {
+          setPayments(loaded === null ? createEmptyPaymentsState() : loaded);
+        }
+      } catch {
+        if (!cancelled) {
+          setPayments(createEmptyPaymentsState());
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadedPanoramaId, paymentsRefreshKey]);
 
   const flow = resolveGuestFlow(identity, panorama, user?.userId ?? null);
   // El asistente propio: la fila ligada a la cuenta de la sesión.
@@ -304,6 +340,44 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     [ownAttendee, panorama],
   );
 
+  /** Marca propia «Ya transferí» (RPC definer; la fila la resuelve auth.uid()). */
+  const markSelfTransferred = useCallback(async () => {
+    if (panorama === null) {
+      return;
+    }
+    setIsSelfPaymentBusy(true);
+    setError(null);
+    try {
+      await claimSelfTransferRow(getSupabaseBrowserClient(), panorama.id);
+      setPaymentsRefreshKey((key) => key + 1);
+    } catch (cause) {
+      setError(
+        getSelfPaymentError(cause, "No se pudo registrar tu marca. Intenta otra vez."),
+      );
+    } finally {
+      setIsSelfPaymentBusy(false);
+    }
+  }, [panorama]);
+
+  /** Retracto de la marca propia (RPC definer). */
+  const retractSelfTransferred = useCallback(async () => {
+    if (panorama === null) {
+      return;
+    }
+    setIsSelfPaymentBusy(true);
+    setError(null);
+    try {
+      await retractSelfTransferRow(getSupabaseBrowserClient(), panorama.id);
+      setPaymentsRefreshKey((key) => key + 1);
+    } catch (cause) {
+      setError(
+        getSelfPaymentError(cause, "No se pudo retractar tu marca. Intenta otra vez."),
+      );
+    } finally {
+      setIsSelfPaymentBusy(false);
+    }
+  }, [panorama]);
+
   if (isInvalid) {
     return MISSING;
   }
@@ -468,6 +542,26 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
         <GuestTeamOrganizer panorama={panorama} refreshKey={teamsRefreshKey} />
       )}
 
+      {/* Control de pagos: bloque copiable + tablero; la fila propia del
+          titular con sesión lleva «Ya transferí» / retractar (RF-11) */}
+      <PaymentTreasuryPanel
+        panorama={panorama}
+        payments={payments}
+        selfActions={
+          ownAttendee === null
+            ? undefined
+            : {
+                playerRef: ownAttendee.id,
+                isTitular:
+                  classification?.titulars.some((attendee) => attendee.id === ownAttendee.id) ??
+                  false,
+                isBusy: isSelfPaymentBusy,
+                mark: () => void markSelfTransferred(),
+                retract: () => void retractSelfTransferred(),
+              }
+        }
+      />
+
       {/* Tablero (solo lectura para invitados: nadie toca la fila ajena) */}
       {classification !== null && (
         <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4">
@@ -560,6 +654,18 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
 
 function statusLabel(status: AttendanceStatus): string {
   return STATUS_OPTIONS.find((option) => option.status === status)?.label ?? "";
+}
+
+/**
+ * Las RPC de marca llegan con el texto en español encabezado por el nombre
+ * de la función («claim_payment_transfer: …»): se muestra solo el mensaje.
+ */
+function getSelfPaymentError(cause: unknown, fallback: string): string {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  if (raw.startsWith("claim_payment_transfer:") || raw.startsWith("retract_payment_transfer:")) {
+    return raw.slice(raw.indexOf(":") + 1).trim();
+  }
+  return fallback;
 }
 
 interface GroupProps {

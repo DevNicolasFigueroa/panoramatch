@@ -26,15 +26,18 @@ import FinancialPanel from "@/components/financial-panel";
 import PlaceVoteSection from "@/components/place-vote-section";
 import ContributionListSection from "@/components/contribution-list-section";
 import TeamOrganizerPanel from "@/components/team-organizer-panel";
+import PaymentTreasuryPanel from "@/components/payment-treasury-panel";
 import type { PanoramaStoreActions, PlaceVoteState } from "@/lib/use-panorama-store";
 import type { ContributionItem } from "@/core/contribution-list";
 import { buildTitularPlayers, type TeamsState } from "@/core/team-organizer";
+import type { PaymentsState } from "@/core/payment-treasury";
 
 export default function PanoramaDashboard({
   panorama,
   place,
   checklist,
   teams,
+  payments,
   actions,
   onAddFriend,
   onChangeStatus,
@@ -47,6 +50,8 @@ export default function PanoramaDashboard({
   checklist: ContributionItem[] | null;
   /** Equipos del modo Deportivo; null mientras carga o en otros modos. */
   teams: TeamsState | null;
+  /** Estado de tesorería del panorama activo; null mientras carga. */
+  payments: PaymentsState | null;
   /** Acciones completas del store (incluye lugares, lista y equipos). */
   actions: PanoramaStoreActions;
   onAddFriend: (name: string, status: Attendee["status"]) => boolean;
@@ -144,6 +149,13 @@ export default function PanoramaDashboard({
           actions={actions}
         />
       )}
+
+      {/* Control de pagos (los 3 modos; se oculta sin banco o con costo $0) */}
+      <PaymentTreasuryPanel
+        panorama={panorama}
+        payments={payments}
+        actions={actions}
+      />
 
       {/* Módulo de Confirmación Rápida */}
       <AddFriendForm onAddFriend={onAddFriend} />

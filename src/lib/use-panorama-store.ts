@@ -57,6 +57,7 @@ import {
   type ContributionItem,
 } from "@/core/contribution-list";
 import {
+  buildRestPlayers,
   buildTitularPlayers,
   claimVacancyOnPromotion,
   createEmptyTeamsState,
@@ -69,21 +70,41 @@ import {
   type TeamSide,
   type TeamsState,
 } from "@/core/team-organizer";
+import {
+  confirmPayment as confirmCorePayment,
+  createEmptyPaymentsState,
+  getCurrentQuotaCLP,
+  getPaymentTreasuryErrorMessage,
+  reopenRefund as reopenCoreRefund,
+  resolveRefund as resolveCoreRefund,
+  revokePayment as revokeCorePayment,
+  setTransferInfo as setCoreTransferInfo,
+  type PaymentsState,
+  type PlayerRef,
+  type RefundKind,
+} from "@/core/payment-treasury";
+import { getTodayLocalValue } from "@/core/datetime-cl";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import {
   deletePanoramaRow,
   deleteChecklistItemRow,
   deletePlaceCandidateRow,
   deletePlaceVoteRow,
+  deleteRefundRow,
   fetchChecklistItems,
   ensureOwnProfileRow,
   fetchCreatorPanoramas,
+  fetchPaymentsState,
   fetchPlaceData,
   fetchTeamsData,
+  insertRefundRow,
+  recordPaymentRow,
   releaseTeamSeatRow,
   claimTeamVacancyRow,
   removeTeamMemberRow,
+  revokePaymentRow,
   updateTeamNameRow,
+  updateTransferInfoRow,
   upsertTeamDrawRows,
   upsertTeamMemberRow,
   declareMatchRow,
@@ -135,6 +156,16 @@ export interface PanoramaStoreActions {
   moveTeamPlayer: (playerRef: string, target: TeamSide | null) => boolean;
   /** Renombra un equipo (creador, ≤30 caracteres, único). Devuelve false si lo bloquean las reglas. */
   renameTeam: (side: TeamSide, rawName: string) => boolean;
+  /** Guarda (o vacía con texto vacío) el bloque de datos de transferencia del creador. */
+  profferPaymentInfo: (rawTransferInfo: string) => boolean;
+  /** Confirma «Pagado» a una persona (monto entero; sin monto usa la cuota vigente). */
+  confirmPayment: (playerRef: PlayerRef, amountCLP?: number) => boolean;
+  /** Revierte una transacción vigente (la última de la persona si no se indica id). */
+  revokePayment: (playerRef: PlayerRef, transactionId?: string) => boolean;
+  /** Cierra «Reembolsada» la devolución pendiente (derivada) de ese motivo. */
+  resolveRefund: (playerRef: PlayerRef, kind: RefundKind) => boolean;
+  /** Reabre un cierre «Reembolsada»: borra el registro y la devolución vuelve a derivarse. */
+  reopenRefund: (playerRef: PlayerRef, kind: RefundKind) => boolean;
 }
 
 /** Estado vivo del tablero de lugares del panorama activo (modo Social). */
@@ -153,6 +184,9 @@ const EMPTY_PLACE_STATE: PlaceVoteState = {
 const EMPTY_CONTRIBUTIONS: ContributionItem[] = [];
 
 const EMPTY_TEAMS: TeamsState = createEmptyTeamsState();
+
+/** Estado de tesorería vacío (bloque null, sin transacciones ni cierres). */
+const EMPTY_PAYMENTS: PaymentsState = createEmptyPaymentsState();
 
 /** Titulares reales del panorama activo (con el organizador virtual n.º 0). */
 function titularPlayersOf(active: SavedPanorama): TeamPlayer[] {
@@ -183,6 +217,8 @@ export interface PanoramaStore {
   checklist: ContributionItem[] | null;
   /** Estado de equipos del panorama activo Deportivo; null mientras carga u otro modo. */
   teams: TeamsState | null;
+  /** Estado de tesorería del panorama activo (los 3 modos); null mientras carga. */
+  payments: PaymentsState | null;
   actions: PanoramaStoreActions;
   /** Limpia el mensaje de error visible. */
   dismissError: () => void;
@@ -253,6 +289,7 @@ export function usePanoramaStore(
   const [place, setPlace] = useState<PlaceVoteState | null>(null);
   const [checklist, setChecklist] = useState<ContributionItem[] | null>(null);
   const [teams, setTeams] = useState<TeamsState | null>(null);
+  const [payments, setPayments] = useState<PaymentsState | null>(null);
 
   // Carga inicial: solo los panoramas del creador con sesión.
   useEffect(() => {
@@ -361,8 +398,7 @@ export function usePanoramaStore(
 
   // Carga de equipos del panorama activo (solo Deportivo).
   const activeIdForTeams = getActivePanorama(state)?.id ?? null;
-  const activeModeForTeams = getActivePanorama(state)?.event.mode ?? null;
-  useEffect(() => {
+  const activeModeForTeams = getActivePanorama(state)?.event.mode ?? null;  useEffect(() => {
     if (activeIdForTeams === null || activeModeForTeams !== "deportivo") {
       setTeams(null);
       return;
@@ -392,6 +428,35 @@ export function usePanoramaStore(
       cancelled = true;
     };
   }, [activeIdForTeams, activeModeForTeams]);
+
+  // Carga de tesorería del panorama activo (los 3 modos: se muestra oculta si
+  // la puerta no pasa; el panel decide con `isPaymentModuleActive`).
+  const activeIdForPayments = getActivePanorama(state)?.id ?? null;
+  useEffect(() => {
+    if (activeIdForPayments === null) {
+      setPayments(null);
+      return;
+    }
+    let cancelled = false;
+    setPayments(null);
+    const run = async () => {
+      try {
+        const loaded = await fetchPaymentsState(getSupabaseBrowserClient(), activeIdForPayments);
+        if (!cancelled) {
+          setPayments(loaded === null ? EMPTY_PAYMENTS : loaded);
+        }
+      } catch {
+        if (!cancelled) {
+          setPayments(EMPTY_PAYMENTS);
+          setLastError("No se pudo cargar el control de pagos. Intenta recargar.");
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeIdForPayments]);
 
   const createEvent = useCallback(
     (input: CreateEventInput): boolean => {
@@ -1070,6 +1135,206 @@ export function usePanoramaStore(
     [state, teams],
   );
 
+  /* ─────────────── Control de pagos y tesorería (creador, los 3 modos) ─────────────── */
+
+  const profferPaymentInfo = useCallback(
+    (rawTransferInfo: string): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null) {
+        return false;
+      }
+      const current = payments ?? EMPTY_PAYMENTS;
+      const result = setCoreTransferInfo(current, rawTransferInfo);
+      if (!result.ok) {
+        setLastError(getPaymentTreasuryErrorMessage(result.reason ?? "transfer_too_long"));
+        return false;
+      }
+      const previous = current;
+      setPayments(result.payments);
+      // El núcleo ya recortó bordes y decidió null para vacío: eso mismo envía la base.
+      void updateTransferInfoRow(getSupabaseBrowserClient(), active.id, result.payments.transferInfo)
+        .then(() => setLastError(null))
+        .catch(() => {
+          setPayments(previous);
+          setLastError("No se pudo guardar el bloque de datos. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, payments],
+  );
+
+  const confirmPayment = useCallback(
+    (playerRef: PlayerRef, amountCLP?: number): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null) {
+        return false;
+      }
+      const current = payments ?? EMPTY_PAYMENTS;
+      const titulars = titularPlayersOf(active);
+      // Sin monto explícito, el predeterminado es la cuota vigente (RF-5);
+      // se pasa explícito a la RPC para que la base registre ese mismo número.
+      const effectiveAmount =
+        amountCLP !== undefined ? amountCLP : getCurrentQuotaCLP(active.event.totalCostCLP, titulars.length);
+      const result = confirmCorePayment(
+        current,
+        playerRef,
+        { amountCLP: effectiveAmount },
+        titulars,
+        active.event.totalCostCLP,
+        getTodayLocalValue(new Date()),
+      );
+      if (!result.ok) {
+        setLastError(
+          result.reason !== undefined
+            ? getPaymentTreasuryErrorMessage(result.reason)
+            : "No se pudo registrar el pago.",
+        );
+        return false;
+      }
+      const previous = current;
+      setPayments(result.payments);
+      void recordPaymentRow(getSupabaseBrowserClient(), {
+        panoramaId: active.id,
+        playerRef,
+        amountCLP: effectiveAmount,
+      })
+        .then(() => setLastError(null))
+        .catch(() => {
+          setPayments(previous);
+          setLastError("No se pudo registrar el pago. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, payments],
+  );
+
+  const revokePayment = useCallback(
+    (playerRef: PlayerRef, transactionId?: string): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null) {
+        return false;
+      }
+      const current = payments ?? EMPTY_PAYMENTS;
+      const result = revokeCorePayment(current, playerRef, transactionId, getTodayLocalValue(new Date()));
+      if (!result.ok) {
+        setLastError(
+          result.reason !== undefined
+            ? getPaymentTreasuryErrorMessage(result.reason)
+            : "No se pudo revertir el pago.",
+        );
+        return false;
+      }
+      // La transacción revocada: quedó con sello y antes estaba vigente.
+      const previousById = new Map(current.transactions.map((txn) => [txn.id, txn]));
+      const revokedTxn = result.payments.transactions.find(
+        (txn) =>
+          txn.playerRef === playerRef &&
+          txn.revokedAt !== null &&
+          previousById.get(txn.id)?.revokedAt === null,
+      );
+      const previous = current;
+      setPayments(result.payments);
+      if (revokedTxn === undefined) {
+        // Sin cambio concreto que sincronizar: el estado local ya revive.
+        return true;
+      }
+      void revokePaymentRow(getSupabaseBrowserClient(), {
+        panoramaId: active.id,
+        paymentId: revokedTxn.id,
+      })
+        .then(() => setLastError(null))
+        .catch(() => {
+          setPayments(previous);
+          setLastError("No se pudo revertir el pago. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, payments],
+  );
+
+  const resolveRefund = useCallback(
+    (playerRef: PlayerRef, kind: RefundKind): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null) {
+        return false;
+      }
+      const current = payments ?? EMPTY_PAYMENTS;
+      const titulars = titularPlayersOf(active);
+      const rest = buildRestPlayers(
+        withCreatorAttendee(active.attendees, active.event.creatorName),
+        active.event.maxCapacity,
+      );
+      const result = resolveCoreRefund(
+        current,
+        playerRef,
+        kind,
+        titulars,
+        rest,
+        active.event.totalCostCLP,
+        getTodayLocalValue(new Date()),
+      );
+      if (!result.ok) {
+        setLastError(
+          result.reason !== undefined
+            ? getPaymentTreasuryErrorMessage(result.reason)
+            : "No se pudo registrar el reembolso.",
+        );
+        return false;
+      }
+      // El monto del cierre lo determinó el núcleo (la pendiente derivada).
+      const resolved =
+        result.payments.resolvedRefunds[result.payments.resolvedRefunds.length - 1];
+      const previous = current;
+      setPayments(result.payments);
+      void insertRefundRow(getSupabaseBrowserClient(), {
+        panoramaId: active.id,
+        playerRef,
+        kind,
+        amountCLP: resolved.amountCLP,
+      })
+        .then(() => setLastError(null))
+        .catch(() => {
+          setPayments(previous);
+          setLastError("No se pudo registrar el reembolso. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, payments],
+  );
+
+  const reopenRefund = useCallback(
+    (playerRef: PlayerRef, kind: RefundKind): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null) {
+        return false;
+      }
+      const current = payments ?? EMPTY_PAYMENTS;
+      const result = reopenCoreRefund(current, playerRef, kind);
+      if (!result.ok) {
+        setLastError(
+          result.reason !== undefined
+            ? getPaymentTreasuryErrorMessage(result.reason)
+            : "No se pudo reabrir el reembolso.",
+        );
+        return false;
+      }
+      const previous = current;
+      setPayments(result.payments);
+      void deleteRefundRow(getSupabaseBrowserClient(), {
+        panoramaId: active.id,
+        playerRef,
+        kind,
+      })
+        .then(() => setLastError(null))
+        .catch(() => {
+          setPayments(previous);
+          setLastError("No se pudo reabrir el reembolso. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, payments],
+  );
+
   const goToNewForm = useCallback(() => {
     setState((current) => ({ ...current, activeId: null }));
   }, []);
@@ -1118,10 +1383,16 @@ export function usePanoramaStore(
       drawTeams,
       moveTeamPlayer,
       renameTeam: renameTeamAction,
+      profferPaymentInfo,
+      confirmPayment,
+      revokePayment,
+      resolveRefund,
+      reopenRefund,
     },
     place,
     checklist,
     teams,
+    payments,
     dismissError,
   };
 }

@@ -218,6 +218,23 @@ export function buildTitularPlayers(
   }));
 }
 
+/**
+ * El resto de la lista compuesta: los que NO son titulares vigentes
+ * (suplentes, «En duda» y «No puedo»), en su orden original. Sirve para
+ * reconocer los nombres de ex-titulares en tableros de pagos (spec 004).
+ */
+export function buildRestPlayers(
+  attendees: readonly Attendee[],
+  maxCapacity: number | null,
+): TeamPlayer[] {
+  const titularRefs = new Set(
+    buildTitularPlayers(attendees, maxCapacity).map((player) => player.ref),
+  );
+  return attendees
+    .filter((attendee) => !titularRefs.has(attendee.id))
+    .map((attendee) => ({ ref: attendee.id, name: attendee.name }));
+}
+
 /* ─────────────── Lectura de equipos (RF-9) ─────────────── */
 
 /** Conteo de jugadores por equipo según las asignaciones vivas. */

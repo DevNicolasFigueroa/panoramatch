@@ -15,6 +15,7 @@ import {
   MAX_TEAM_NAME_LENGTH,
   MIN_TITULARS_TO_DRAW,
   buildTitularPlayers,
+  buildRestPlayers,
   claimVacancyOnPromotion,
   createEmptyTeamsState,
   dropPlayerFromTeams,
@@ -148,6 +149,20 @@ describe("Titulares elegibles (RF-3)", () => {
     assert.deepEqual(
       noCap.map((t) => t.ref),
       [CREATOR_ATTENDEE_ID, "p1", "p2", "p3", "p6"],
+    );
+  });
+
+  test("el resto de la lista compuesta abandona a los titulares vigentes (spec 004)", () => {
+    const rest = buildRestPlayers(buildCompList(), 3);
+    assert.deepEqual(
+      rest.map((p) => p.ref),
+      ["p3", "p4", "p5", "p6"],
+    );
+    // Con cupo 5 los ex-titulares bajados vuelven al resto.
+    const restWideCap = buildRestPlayers(buildCompList(), 5);
+    assert.deepEqual(
+      restWideCap.map((p) => p.ref),
+      ["p4", "p5"],
     );
   });
 

@@ -28,6 +28,7 @@ export default function PanoramaApp() {
     place,
     checklist,
     teams,
+    payments,
     actions,
     dismissError,
   } = usePanoramaStore(user?.userId ?? null, user?.displayName ?? null);
@@ -136,6 +137,7 @@ export default function PanoramaApp() {
           place={place}
           checklist={checklist}
           teams={teams}
+          payments={payments}
           actions={actions}
           onAddFriend={actions.addFriend}
           onChangeStatus={actions.changeFriendStatus}
