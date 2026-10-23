@@ -145,7 +145,7 @@ export function createEmptyPaymentsState(): PaymentsState {
 /**
  * Activo si y solo si hay cuota que cobrar (costo > $0) y bloque bancario
  * definido — o quedan pagos vigentes / reembolsos resueltos que obligan a
- * mantener el módulo (enismatch para cerrar devoluciones y revertir).
+ * mantener el módulo (para cerrar devoluciones y revertir).
  */
 export function isPaymentModuleActive(
   totalCostCLP: number,

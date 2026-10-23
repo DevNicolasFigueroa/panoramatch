@@ -16,6 +16,13 @@ import type {
 import type { PlaceCandidate, PlaceVoteRecord } from "@/core/place-vote";
 import type { ContributionItem } from "@/core/contribution-list";
 import type { TeamAssignment, TeamSide, TeamVacancy, TeamsState } from "@/core/team-organizer";
+import type {
+  PaymentClaim,
+  PaymentsState,
+  RefundKind,
+  PaymentTransaction,
+  ResolvedRefund,
+} from "@/core/payment-treasury";
 
 /** Filas de `public.panoramas`. */
 export interface PanoramaRow {
@@ -41,6 +48,8 @@ export interface ParticipantRow {
   auth_user_id: string | null;
   guest_secret: string | null;
   created_at: string;
+  /** Sello «Ya transferí» (solo escrita por RPC definer); null = «Pendiente». */
+  payment_transfer_claimed_at?: string | null;
 }
 
 /** Reemplaza un error en silencio por uno accionable. */
@@ -754,4 +763,261 @@ export function mapTeamsDataToState(teams: TeamsData): TeamsState {
     assignments: teams.assignments,
     vacancies: teams.vacancies,
   };
+}
+
+/* ─────────────── Control de pagos y tesorería (spec 004) ─────────────── */
+
+/** Filas de `public.panorama_payments` (historial completo, revocadas incluidas). */
+export interface PaymentTransactionRow {
+  id: number;
+  panorama_id: string;
+  /** 'creator' (organizador virtual) o el id de la fila `participants`. */
+  player_ref: string;
+  amount_clp: number;
+  paid_at: string;
+  /** Sello de la reversión; null = transacción vigente. */
+  revoked_at: string | null;
+}
+
+/** Filas de `public.panorama_refunds` (SOLO cierres «Reembolsada»). */
+export interface PanoramaRefundRow {
+  id: number;
+  panorama_id: string;
+  player_ref: string;
+  kind: RefundKind;
+  amount_clp: number;
+  resolved_at: string;
+}
+
+/**
+ * Sello timestamptz del servidor → texto local `'YYYY-MM-DDTHH:mm'`.
+ * La zona es America/Santiago: el sello llega como instante con offset
+ * ( inputs del servidor ), así que la lectura con `Intl` es la única
+ * conversión y jamás toca `toISOString()`.
+ */
+function mapTimestampToLocalText(serverStamp: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(serverStamp));
+  const get = (type: string): string =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+function mapPaymentRowToTransaction(row: PaymentTransactionRow): PaymentTransaction {
+  return {
+    id: String(row.id),
+    playerRef: row.player_ref,
+    amountCLP: row.amount_clp,
+    recordedAt: mapTimestampToLocalText(row.paid_at),
+    revokedAt: row.revoked_at === null ? null : mapTimestampToLocalText(row.revoked_at),
+  };
+}
+
+function mapRefundRowToResolved(row: PanoramaRefundRow): ResolvedRefund {
+  return {
+    playerRef: row.player_ref,
+    kind: row.kind,
+    amountCLP: row.amount_clp,
+    resolvedAt: mapTimestampToLocalText(row.resolved_at),
+  };
+}
+
+/**
+ * Lee el estado completo de tesorería: bloque bancario (columna de
+ * `panoramas`), transacciones con sus sellos convertidos a texto local,
+ * marcas «Ya transferí» vigentes (columna de `participants`) y cierres
+ * «Reembolsada». Devuelve `null` cuando el panorama ya no existe.
+ */
+export async function fetchPaymentsState(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<PaymentsState | null> {
+  const [transferRes, paymentsRes, refundsRes, claimsRes] = await Promise.all([
+    client
+      .from("panoramas")
+      .select("payment_info")
+      .eq("id", panoramaId)
+      .maybeSingle(),
+    client
+      .from("panorama_payments")
+      .select("*")
+      .eq("panorama_id", panoramaId)
+      .order("paid_at", { ascending: true }),
+    client
+      .from("panorama_refunds")
+      .select("*")
+      .eq("panorama_id", panoramaId)
+      .order("resolved_at", { ascending: true }),
+    client
+      .from("participants")
+      .select("id,payment_transfer_claimed_at")
+      .eq("panorama_id", panoramaId)
+      .order("created_at", { ascending: true }),
+  ]);
+
+  if (transferRes.error !== null) {
+    throw new Error(transferRes.error.message);
+  }
+  if (paymentsRes.error !== null) {
+    throw new Error(paymentsRes.error.message);
+  }
+  if (refundsRes.error !== null) {
+    throw new Error(refundsRes.error.message);
+  }
+  if (claimsRes.error !== null) {
+    throw new Error(claimsRes.error.message);
+  }
+
+  const transferRow = transferRes.data as { payment_info: string | null } | null;
+  if (transferRow === null) {
+    return null;
+  }
+  const claimRows = (claimsRes.data ?? []) as Array<{
+    id: string;
+    payment_transfer_claimed_at: string | null;
+  }>;
+  const claims: PaymentClaim[] = claimRows
+    .filter((row) => row.payment_transfer_claimed_at !== null)
+    .map((row) => ({
+      playerRef: row.id,
+      claimedAt: mapTimestampToLocalText(row.payment_transfer_claimed_at as string),
+    }));
+
+  return {
+    transferInfo: transferRow.payment_info,
+    transactions: ((paymentsRes.data ?? []) as PaymentTransactionRow[]).map(
+      mapPaymentRowToTransaction,
+    ),
+    claims,
+    resolvedRefunds: ((refundsRes.data ?? []) as PanoramaRefundRow[]).map(
+      mapRefundRowToResolved,
+    ),
+  };
+}
+
+/** Guarda (o vacía con `null`) el bloque de datos de transferencia (creador). */
+export async function updateTransferInfoRow(
+  client: SupabaseClient,
+  panoramaId: string,
+  transferInfo: string | null,
+): Promise<string | null> {
+  const { data, error } = await client
+    .from("panoramas")
+    .update({ payment_info: transferInfo })
+    .eq("id", panoramaId)
+    .select("payment_info")
+    .single();
+
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  return (data as { payment_info: string | null } | null)?.payment_info ?? null;
+}
+
+/**
+ * Confirmación «Pagado» del creador: RPC definer `record_payment` inserta
+ * la transacción y CONSUME la marca «Ya transferí» en la misma transacción
+ * de servidor (la columna de la marca no tiene grants directos para nadie).
+ */
+export async function recordPaymentRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; playerRef: string; amountCLP: number },
+): Promise<void> {
+  const { error } = await client.rpc("record_payment", {
+    p_panorama_id: payload.panoramaId,
+    p_player_ref: payload.playerRef,
+    p_amount_clp: payload.amountCLP,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Reversión del creador: RPC definer `revoke_payment` fija el sello
+ * `revoked_at` EN EL SERVIDOR (la fila queda en el historial, fuera del
+ * acumulado vigente). El pago se identifica por su id de transacción.
+ */
+export async function revokePaymentRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; paymentId: string },
+): Promise<void> {
+  const { error } = await client.rpc("revoke_payment", {
+    p_panorama_id: payload.panoramaId,
+    p_payment_id: Number.parseInt(payload.paymentId, 10),
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Cierre «Reembolsada» del creador: INSERT directo por RLS (el sello
+ * `resolved_at` lo pone la base con su default `now()`; jamás se envía).
+ */
+export async function insertRefundRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; playerRef: string; kind: RefundKind; amountCLP: number },
+): Promise<ResolvedRefund> {
+  const { data, error } = await client
+    .from("panorama_refunds")
+    .insert({
+      panorama_id: payload.panoramaId,
+      player_ref: payload.playerRef,
+      kind: payload.kind,
+      amount_clp: payload.amountCLP,
+    })
+    .select()
+    .single();
+
+  return mapRefundRowToResolved(assertData(data, error) as PanoramaRefundRow);
+}
+
+/** Reabertura del creador: borrar el cierre; la devolución vuelve a derivarse. */
+export async function deleteRefundRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; playerRef: string; kind: RefundKind },
+): Promise<void> {
+  const { error } = await client
+    .from("panorama_refunds")
+    .delete()
+    .eq("panorama_id", payload.panoramaId)
+    .eq("player_ref", payload.playerRef)
+    .eq("kind", payload.kind);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Marca propia «Ya transferí» del titular con cuenta (RPC definer). */
+export async function claimSelfTransferRow(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<void> {
+  const { error } = await client.rpc("claim_payment_transfer", {
+    p_panorama_id: panoramaId,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Retracto de la marca propia del titular con cuenta (RPC definer). */
+export async function retractSelfTransferRow(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<void> {
+  const { error } = await client.rpc("retract_payment_transfer", {
+    p_panorama_id: panoramaId,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
 }
