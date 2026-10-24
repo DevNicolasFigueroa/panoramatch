@@ -126,32 +126,19 @@ export default function PaymentTreasuryPanel({
     setInfoDraft(state.transferInfo ?? "");
   }, [state.transferInfo]);
 
-  const [isCopied, setIsCopied] = useState(false);
+  const [isCopied, setIsCopied] = useState<"idle" | "ok" | "failed">("idle");
   const [confirmDrafts, setConfirmDrafts] = useState<Record<string, string>>({});
-
-  if (isLoading) {
-    return (
-      <section className="rounded-2xl border border-ink/15 bg-elev p-4" aria-busy="true">
-        <h2 className="font-display text-lg font-bold tracking-tight text-ink">Control de pagos</h2>
-        <p className="mt-1 text-sm text-ink-soft">Cargando los pagos…</p>
-      </section>
-    );
-  }
-  // Puerta del módulo (RF-1): costo > $0 Y bloque definido — o quedan montos
-  // vigentes/resueltos que obligan a mantenerlo abierto (revertir, cerrar devoluciones).
-  if (!isActive) {
-    return null;
-  }
 
   const copyTransferInfo = async () => {
     const text = state.transferInfo ?? "";
     try {
       await navigator.clipboard.writeText(text);
-      setIsCopied(true);
-      window.setTimeout(() => setIsCopied(false), 2000);
+      setIsCopied("ok");
+      window.setTimeout(() => setIsCopied("idle"), 2000);
     } catch {
-      window.setTimeout(() => setIsCopied(false), 0);
-      return;
+      // El usuario selecciona el texto a mano: nunca un fallo silencioso.
+      setIsCopied("failed");
+      window.setTimeout(() => setIsCopied("idle"), 2500);
     }
   };
 
@@ -164,6 +151,77 @@ export default function PaymentTreasuryPanel({
       // El borrador se re-sincroniza con el efecto de `transferInfo`.
     }
   };
+
+  /** Editor del bloque (solo creador): comparten el módulo vivo y la captura apagada. */
+  const editorBox =
+    actions === undefined ? null : (
+      <div className="mt-2 flex flex-col gap-2">
+        <textarea
+          value={infoDraft}
+          onChange={(inputEvent) => setInfoDraft(inputEvent.target.value)}
+          rows={3}
+          maxLength={MAX_TRANSFER_INFO_LENGTH + 50}
+          placeholder="Banco, tipo de cuenta, número y correo…"
+          className="w-full whitespace-pre-line rounded-lg border border-ink/20 bg-elev px-2 py-1.5 text-sm leading-snug text-ink outline-none focus:border-ink/50"
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setInfoDraft("");
+              actions.profferPaymentInfo("");
+            }}
+            className="rounded-lg border border-baja/40 px-2.5 py-1 text-xs font-bold text-baja transition hover:bg-baja-soft active:scale-[0.97]"
+          >
+            Borrar
+          </button>
+          <button
+            type="button"
+            onClick={saveDraft}
+            className="rounded-lg border border-cancha/50 bg-cancha-soft px-2.5 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
+          >
+            Guardar bloque
+          </button>
+        </div>
+      </div>
+    );
+
+  if (isLoading) {
+    return (
+      <section className="rounded-2xl border border-ink/15 bg-elev p-4" aria-busy="true">
+        <h2 className="font-display text-lg font-bold tracking-tight text-ink">Control de pagos</h2>
+        <p className="mt-1 text-sm text-ink-soft">Cargando los pagos…</p>
+      </section>
+    );
+  }
+  // Puerta del módulo (RF-1): costo > $0 Y bloque definido — o quedan montos
+  // vigentes/resueltos que obligan a mantenerlo abierto (revertir, cerrar devoluciones).
+  if (!isActive) {
+    if (actions === undefined || panorama.event.totalCostCLP <= 0) {
+      // El invitado no ve nada (RF-1) y sin cuota que cobrar no hay captura.
+      return null;
+    }
+    // Único punto de encendido: la tarjeta de captura del creador. Sin ella
+    // el módulo jamás arranca (el tablero exige bloque definido).
+    return (
+      <section className="flex flex-col gap-3 rounded-2xl border border-ink/15 bg-elev p-4">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="font-display text-lg font-bold tracking-tight text-ink">Control de pagos</h2>
+          <span className="rounded-full border border-ink/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
+            Apagado
+          </span>
+        </div>
+        <p className="text-sm text-ink-soft">
+          {`Hay ${formatCLP(panorama.event.totalCostCLP)} por repartir, pero faltan los datos de transferencia: el tablero se enciende al guardarlos.`}
+        </p>
+        <div className="rounded-xl border border-ink/15 bg-paper p-3">
+          <h3 className="text-sm font-bold text-ink">Datos de transferencia</h3>
+          {editorBox}
+        </div>
+      </section>
+    );
+  }
+
 
   /** Parse del monto editable: solo dígitos; vacío = la cuota vigente. */
   const parseDraftAmount = (playerRef: PlayerRef): number | undefined => {
@@ -194,7 +252,7 @@ export default function PaymentTreasuryPanel({
             onClick={() => void copyTransferInfo()}
             className="shrink-0 rounded-lg border border-ink/20 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-ink/50 hover:text-ink active:scale-[0.97]"
           >
-            {isCopied ? "¡Copiado!" : "Copiar"}
+            {isCopied === "ok" ? "¡Copiado!" : isCopied === "failed" ? "No se pudo copiar" : "Copiar"}
           </button>
         </div>
 
@@ -203,35 +261,7 @@ export default function PaymentTreasuryPanel({
             {state.transferInfo ?? ""}
           </p>
         ) : (
-          <div className="mt-2 flex flex-col gap-2">
-            <textarea
-              value={infoDraft}
-              onChange={(inputEvent) => setInfoDraft(inputEvent.target.value)}
-              rows={3}
-              maxLength={MAX_TRANSFER_INFO_LENGTH + 50}
-              placeholder="Banco, tipo de cuenta, número y correo…"
-              className="w-full whitespace-pre-line rounded-lg border border-ink/20 bg-elev px-2 py-1.5 text-sm leading-snug text-ink outline-none focus:border-ink/50"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setInfoDraft("");
-                  actions.profferPaymentInfo("");
-                }}
-                className="rounded-lg border border-baja/40 px-2.5 py-1 text-xs font-bold text-baja transition hover:bg-baja-soft active:scale-[0.97]"
-              >
-                Borrar
-              </button>
-              <button
-                type="button"
-                onClick={saveDraft}
-                className="rounded-lg border border-cancha/50 bg-cancha-soft px-2.5 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
-              >
-                Guardar bloque
-              </button>
-            </div>
-          </div>
+          editorBox
         )}
       </div>
 

@@ -925,12 +925,15 @@ export async function updateTransferInfoRow(
  * Confirmación «Pagado» del creador: RPC definer `record_payment` inserta
  * la transacción y CONSUME la marca «Ya transferí» en la misma transacción
  * de servidor (la columna de la marca no tiene grants directos para nadie).
+ * La RPC devuelve el id de fila de la base: el store lo pisa en la
+ * transacción local (`tx-N` de solo display) para que la reversión
+ * posterior pueda apuntar a la fila real.
  */
 export async function recordPaymentRow(
   client: SupabaseClient,
   payload: { panoramaId: string; playerRef: string; amountCLP: number },
-): Promise<void> {
-  const { error } = await client.rpc("record_payment", {
+): Promise<string> {
+  const { data, error } = await client.rpc("record_payment", {
     p_panorama_id: payload.panoramaId,
     p_player_ref: payload.playerRef,
     p_amount_clp: payload.amountCLP,
@@ -938,6 +941,7 @@ export async function recordPaymentRow(
   if (error !== null) {
     throw new Error(error.message);
   }
+  return String(data);
 }
 
 /**

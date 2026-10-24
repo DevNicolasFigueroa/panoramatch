@@ -1193,12 +1193,29 @@ export function usePanoramaStore(
       }
       const previous = current;
       setPayments(result.payments);
+      // La transacción recién creada queda al final con id local `tx-N`;
+      // tras el confirmado, la RPC devuelve el id de fila real y se pisa
+      // para que «Revertir» apunte a la fila de la base.
+      const hotTxn =
+        result.payments.transactions[result.payments.transactions.length - 1];
       void recordPaymentRow(getSupabaseBrowserClient(), {
         panoramaId: active.id,
         playerRef,
         amountCLP: effectiveAmount,
       })
-        .then(() => setLastError(null))
+        .then((dbPaymentId) => {
+          setPayments((value) =>
+            value === null
+              ? value
+              : {
+                  ...value,
+                  transactions: value.transactions.map((txn) =>
+                    txn.id === hotTxn.id ? { ...txn, id: dbPaymentId } : txn,
+                  ),
+                },
+          );
+          setLastError(null);
+        })
         .catch(() => {
           setPayments(previous);
           setLastError("No se pudo registrar el pago. Intenta otra vez.");

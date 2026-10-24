@@ -223,6 +223,9 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
             ? current
             : { ...current, attendees: [...current.attendees, mapParticipantRowToAttendee(row)] },
         );
+        // Conseguí membresía: el tablero de pagos se leyó antes con la RLS
+        // ocultando filas; releerlo ahora con la fila propia.
+        setPaymentsRefreshKey((key) => key + 1);
       } catch {
         setError("No se pudo guardar tu respuesta. Intenta otra vez.");
       } finally {
@@ -255,6 +258,8 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
       const refreshed = await fetchPanoramaById(getSupabaseBrowserClient(), panoramaId);
       if (refreshed !== null) {
         setPanorama(refreshed);
+        // La fila adoptada da membresía: releer el tablero de pagos.
+        setPaymentsRefreshKey((key) => key + 1);
       }
     } catch {
       setError("No se pudo recuperar tu respuesta anterior. Intenta otra vez.");
