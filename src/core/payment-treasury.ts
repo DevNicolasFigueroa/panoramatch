@@ -31,6 +31,7 @@
 
 import { isValidCLPAmount, splitCost } from "./currency-clp";
 import type { TeamPlayer } from "./team-organizer";
+import { CREATOR_ATTENDEE_ID } from "./creator-attendee";
 
 /**
  * Referencia de la persona que paga: `creator` (organizador virtual) o el
@@ -143,9 +144,11 @@ export function createEmptyPaymentsState(): PaymentsState {
 /* ─────────────── Puerta del módulo (RF-1) ─────────────── */
 
 /**
- * Activo si y solo si hay cuota que cobrar (costo > $0) y bloque bancario
- * definido — o quedan pagos vigentes / reembolsos resueltos que obligan a
- * mantener el módulo (para cerrar devoluciones y revertir).
+ * Activo si hay cuota que cobrar (costo > $0) o quedan pagos vigentes /
+ * reembolsos resueltos que obligan a mantener el módulo (para cerrar
+ * devoluciones y revertir). VISIBLE aunque el bloque bancario aún no se
+ * defina (28-oct, pedido del dueño): el creador llena los datos desde
+ * el propio módulo (RF-2).
  */
 export function isPaymentModuleActive(
   totalCostCLP: number,
@@ -154,10 +157,7 @@ export function isPaymentModuleActive(
   const hasMoney =
     state.transactions.some((txn) => txn.revokedAt === null) ||
     state.resolvedRefunds.length > 0;
-  if (hasMoney) {
-    return true;
-  }
-  return totalCostCLP > 0 && (state.transferInfo ?? "").trim().length > 0;
+  return hasMoney || totalCostCLP > 0;
 }
 
 /* ─────────────── Cuota actual y acumulados (RF-4) ─────────────── */
@@ -178,6 +178,24 @@ export function getVigentePaidTotalCLP(
   return state.transactions
     .filter((txn) => txn.playerRef === playerRef && txn.revokedAt === null)
     .reduce((total, txn) => total + txn.amountCLP, 0);
+}
+
+/**
+ * Pagado NETO vigente de una persona: su acumulado menos lo que YA se le
+ * reembolsó (cierres «Reembolsada» quedan confirmados; la plata volvió a
+ * su bolsillo). Es el valor que tablero y boleta deben tratar como pagado.
+ */
+export function getNetPaidTotalCLP(
+  state: PaymentsState,
+  playerRef: PlayerRef,
+): number {
+  const resolvedTotal = state.resolvedRefunds
+    .filter((refund) => refund.playerRef === playerRef)
+    .reduce((total, refund) => total + refund.amountCLP, 0);
+  return Math.max(
+    0,
+    getVigentePaidTotalCLP(state, playerRef) - resolvedTotal,
+  );
 }
 
 /** Estado de flujo derivado: la marca manda, luego el pago confirmado. */
@@ -289,13 +307,15 @@ export interface TitularPaymentView {
   creditCLP: number;
   /** true si este titular tiene marca «Ya transferí» vigente. */
   hasClaim: boolean;
+  /** true en la fila del organizador: recibe las transferencias, nunca adeuda. */
+  isOrganizer: boolean;
 }
 
 /** Totales de tesorería (solo creador, RF-10). */
 export interface TreasuryTotals {
   /** Suma de pagos vigentes (la plata que ya entró, cualquiera sea su dueño). */
   collectedCLP: number;
-  /** Suma de adeudos vigentes de los titulares (cuota de hoy − pagado). */
+  /** Suma de adeudos vigentes de los invitados titulares (el organizador recibe, no adeuda). */
   toCollectCLP: number;
   /** Suma de devoluciones pendientes (Caso A + saldo a favor Caso B). */
   toRefundCLP: number;
@@ -330,10 +350,12 @@ export function getPaymentTreasuryView(
   const names = new Map(allPlayers.map((player) => [player.ref, player.name]));
 
   const titulars = titularPlayers.map<TitularPaymentView>((player) => {
-    const paidTotal = getVigentePaidTotalCLP(state, player.ref);
+    // Pagado NETO: lo que entró menos lo ya reembolsado a esa persona.
+    const paidTotal = getNetPaidTotalCLP(state, player.ref);
     const hasClaim = state.claims.some((claim) => claim.playerRef === player.ref);
-    const owing = Math.max(0, quota - paidTotal);
-    const credit = paidTotal > quota ? paidTotal - quota : 0;
+    const isOrganizer = player.ref === CREATOR_ATTENDEE_ID;
+    const owing = isOrganizer ? 0 : Math.max(0, quota - paidTotal);
+    const credit = isOrganizer ? 0 : paidTotal > quota ? paidTotal - quota : 0;
     const flowState: PaymentFlowState = hasClaim
       ? "in_review"
       : paidTotal > 0
@@ -349,14 +371,25 @@ export function getPaymentTreasuryView(
       owingCLP: owing,
       creditCLP: credit,
       hasClaim,
+      isOrganizer,
     };
   });
 
   const pending = listPendingRefunds(state, titularPlayers, restPlayers, totalCostCLP);
-  const collected = state.transactions
-    .filter((txn) => txn.revokedAt === null)
-    .reduce((total, txn) => total + txn.amountCLP, 0);
-  const toCollect = titulars.reduce((total, row) => total + row.owingCLP, 0);
+  // Recaudado en vivo: entradas vigentes MENOS las devoluciones ya cerradas
+  // (según pedido del dueño, la plata que salió sale del total). El
+  // organizador (que recibe las transferencias) nunca suma al por cobrar.
+  const resolvedAll = state.resolvedRefunds.reduce((total, refund) => total + refund.amountCLP, 0);
+  const collected = Math.max(
+    0,
+    state.transactions
+      .filter((txn) => txn.revokedAt === null)
+      .reduce((total, txn) => total + txn.amountCLP, 0) - resolvedAll,
+  );
+  // El organizador recibe las transferencias: su cuota nunca es cobrable.
+  const toCollect = titulars
+    .filter((row) => !row.isOrganizer)
+    .reduce((total, row) => total + row.owingCLP, 0);
   const toRefund = pending.reduce((total, refund) => total + refund.amountCLP, 0);
 
   return {

@@ -21,6 +21,7 @@ import {
   type TeamsState,
 } from "@/core/team-organizer";
 import { CREATOR_ATTENDEE_ID } from "@/core/creator-attendee";
+import { initialsFromName } from "@/core/initials";
 
 /** Paleta de cada equipo: tokens estables del sistema (cancha vs camino). */
 const TEAM_STYLES = {
@@ -71,26 +72,34 @@ export default function TeamOrganizerPanel({
   /** Fila común de jugador, con los controles solo para el creador. */
   const renderPlayerRow = (player: TeamPlayer, side: TeamSide) => {
     const otherSide: TeamSide = side === "a" ? "b" : "a";
+    const styles = TEAM_STYLES[side];
     return (
       <li
         key={player.ref}
-        className="flex items-center justify-between gap-2 rounded-lg bg-elev px-2.5 py-1.5"
+        className="flex items-center gap-1.5 rounded-lg bg-elev px-1.5 py-1.5 sm:gap-2 sm:px-2.5 sm:py-2"
       >
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-sm font-bold text-ink">{player.name}</span>
+        {/* Avatar del jugador con su tinte de equipo */}
+        <span
+          aria-hidden="true"
+          className={`grid h-6 w-6 shrink-0 place-items-center rounded-full font-display text-[9px] font-bold sm:h-7 sm:w-7 sm:text-[10px] ${styles.soft} ${styles.text}`}
+        >
+          {initialsFromName(player.name)}
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span className="truncate text-[12px] font-bold text-ink sm:text-sm">{player.name}</span>
           {player.ref === CREATOR_ATTENDEE_ID && (
-            <span className={`shrink-0 rounded-full border border-ink/20 px-1.5 py-px text-[10px] font-semibold text-ink-soft`}>
+            <span className="mt-0.5 w-fit shrink-0 rounded-full border border-ink/20 px-1.5 py-px text-[9px] font-semibold text-ink-soft">
               Organizador
             </span>
           )}
-        </div>
+        </span>
         {isOrganizer && actions !== undefined && (
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 flex-col items-center gap-1">
             <button
               type="button"
               aria-label={`Mover a ${player.name} al otro equipo`}
               onClick={() => actions.moveTeamPlayer(player.ref, otherSide)}
-              className="rounded-lg border border-ink/15 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-ink/40 hover:text-ink active:scale-[0.97]"
+              className="rounded-md border border-ink/15 px-1.5 py-0.5 text-[11px] font-bold text-ink-soft transition hover:border-ink/40 hover:text-ink active:scale-[0.97]"
             >
               ↔
             </button>
@@ -98,7 +107,7 @@ export default function TeamOrganizerPanel({
               type="button"
               aria-label={`Sacar a ${player.name} del equipo`}
               onClick={() => actions.moveTeamPlayer(player.ref, null)}
-              className="rounded-lg border border-ink/15 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-baja hover:text-baja active:scale-[0.97]"
+              className="rounded-md border border-ink/15 px-1.5 py-0.5 text-[11px] font-bold text-ink-soft transition hover:border-baja hover:text-baja active:scale-[0.97]"
             >
               ✕
             </button>
@@ -116,7 +125,7 @@ export default function TeamOrganizerPanel({
     const isRenaming = isOrganizer && renamingSide === side;
 
     return (
-      <div key={side} className={`rounded-xl border ${styles.border} ${styles.soft} p-3`}>
+      <div key={side} className={`rounded-xl border ${styles.border} ${styles.soft} p-2.5 sm:p-3.5`}>
         <div className="flex items-center justify-between gap-2">
           {isRenaming && actions !== undefined ? (
             <form
@@ -140,13 +149,13 @@ export default function TeamOrganizerPanel({
               />
             </form>
           ) : (
-            <p className={`truncate font-display text-base font-bold tracking-tight ${styles.text}`}>
+            <p className={`min-w-0 text-sm font-display font-bold leading-tight tracking-tight ${styles.text}`}>
               {info.name}
             </p>
           )}
-          <div className="flex shrink-0 items-center gap-1.5">
-            <span className="text-xs font-semibold text-ink-soft">
-              {players.length} {players.length === 1 ? "jugador" : "jugadores"}
+          <div className="flex shrink-0 items-center gap-1">
+            <span className="text-[10px] font-semibold text-ink-soft">
+              {players.length} {players.length === 1 ? "jug." : "jug."}
             </span>
             {isOrganizer && actions !== undefined && (
               <button
@@ -177,8 +186,9 @@ export default function TeamOrganizerPanel({
   };
 
   return (
-    <section className="rounded-2xl border border-ink/15 bg-elev p-4">
-      <div className="flex items-baseline justify-between gap-2">
+    <section className="relative overflow-hidden rounded-2xl border border-ink/15 bg-elev p-4">
+      <span aria-hidden="true" className="absolute inset-x-0 top-0 h-1.5 bg-deporte" />
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">
           Organizador de equipos
         </h2>
@@ -198,19 +208,26 @@ export default function TeamOrganizerPanel({
           ? "Cargando los equipos…"
           : isOrganizer
             ? availability.available
-              ? "El sorteo reparte solo los titulares sin equipo; los fijos se mantienen."
+              ? "El sorteo reparte solo los confirmados sin equipo; los fijos se mantienen."
               : getTeamOrganizerErrorMessage(availability.reason ?? "nothing_to_draw")
             : "Quién juega en cada equipo lo decide el organizador."}
       </p>
 
       {!isLoading && (
-        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="relative mt-3 grid grid-cols-2 gap-2 sm:gap-4">
           {renderTeamCard("a")}
+          {/* Separador «VS» centrado entre las dos columnas */}
+          <span
+            aria-hidden="true"
+            className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border border-ink bg-elev px-1.5 py-0.5 font-display text-[9px] font-extrabold tracking-wide text-ink sm:px-2 sm:text-xs"
+          >
+            VS
+          </span>
           {renderTeamCard("b")}
         </div>
       )}
 
-      {/* Titulares sin equipo: se reparten con el sorteo o a dedo (creador). */}
+      {/* Confirmados sin equipo: se reparten con el sorteo o a dedo (creador). */}
       {!isLoading && roster.unassigned.length > 0 && (
         <div className="mt-3 rounded-xl border border-dashed border-ink/20 bg-paper p-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
@@ -220,7 +237,7 @@ export default function TeamOrganizerPanel({
             {roster.unassigned.map((player) => (
               <li
                 key={player.ref}
-                className="flex items-center justify-between gap-2 rounded-lg bg-elev px-2.5 py-1.5"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-elev px-2.5 py-1.5"
               >
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate text-sm font-bold text-ink">{player.name}</span>
@@ -231,7 +248,7 @@ export default function TeamOrganizerPanel({
                   )}
                 </div>
                 {isOrganizer && actions !== undefined && (
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex shrink-0 flex-wrap items-center gap-1">
                     <button
                       type="button"
                       onClick={() => actions.moveTeamPlayer(player.ref, "a")}

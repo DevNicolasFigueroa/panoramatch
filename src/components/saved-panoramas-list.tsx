@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * Listado "Mis Panoramas Guardados": resumen rápido por tarjeta (título,
- * modo, fecha, estado de quórum y total en CLP), apertura del panel activo
- * y eliminación. Los datos derivados los calcula `core/panorama-collection.ts`.
+ * Listado "Mis Panoramas Guardados" como carrusel horizontal de tarjetas
+ * (lectura del prototipo de Stitch): cada card abre el panel activo;
+ * eliminar pide confirmación. Los datos derivados los calcula
+ * `core/panorama-collection.ts`.
  */
 
 import type { SavedPanorama } from "@/core/types";
@@ -23,17 +24,24 @@ export default function SavedPanoramasList({
   const ordered = sortSavedPanoramas(savedPanoramas);
 
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="px-1 font-display text-lg font-bold tracking-tight text-ink">
-        Mis panoramas
-      </h2>
+    <section className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2 px-1">
+        <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+          Mis panoramas
+        </h2>
+        {ordered.length > 0 && (
+          <span className="text-xs font-semibold text-ink-soft">
+            {ordered.length} {ordered.length === 1 ? "activo" : "activos"}
+          </span>
+        )}
+      </div>
 
       {ordered.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-ink/25 bg-elev px-4 py-6 text-center text-sm text-ink-soft">
           Crea tu primer panorama 🎉
         </p>
       ) : (
-        <ul className="flex flex-col gap-2.5">
+        <ul className="flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-1">
           {ordered.map((savedPanorama) => (
             <SavedPanoramaCard
               key={savedPanorama.id}
@@ -69,42 +77,37 @@ function SavedPanoramaCard({
   };
 
   return (
-    <li
-      className="relative flex items-stretch gap-2 overflow-hidden rounded-xl border border-ink/15 bg-elev"
-    >
-      {/* Franja lateral con el color del modo: es información, no adorno */}
-      <span
-        aria-hidden
-        className={`absolute inset-y-0 left-0 w-[3px] ${modeStyle.barClass}`}
-      />
-      {/* Zona clicable: abre el panel activo */}
+    <li className="relative shrink-0 snap-start overflow-hidden rounded-2xl border border-ink/15 bg-elev sm:w-full sm:shrink">
+      {/* Franja superior con el color del modo: es información, no adorno */}
+      <span aria-hidden className={`block h-1.5 ${modeStyle.barClass}`} />
+
+      {/* Zona clicable: abre el panel activo (la ✕ de eliminar va aparte) */}
       <button
         type="button"
         onClick={() => onOpenPanorama(summary.id)}
-        className="min-w-0 flex-1 rounded-xl py-3 pr-3 pl-4 text-left transition hover:bg-paper active:scale-[0.99]"
+        className="flex w-64 flex-col p-4 pr-9 text-left transition hover:bg-paper active:scale-[0.99] sm:w-full"
       >
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-sm font-bold text-ink">{summary.title}</span>
-          <span className="shrink-0 font-display text-base font-extrabold tabular-nums text-cancha">
-            {formatCLP(summary.totalCostCLP)}
-          </span>
-        </div>
+        <span className={`w-fit rounded-full border px-1.5 py-px font-semibold text-[11px] ${modeStyle.chipClass}`}>
+          {MODE_EMOJI[summary.mode]} {modeStyle.label}
+        </span>
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft">
-          <span className={`rounded-full border px-1.5 py-px font-semibold ${modeStyle.chipClass}`}>
-            {MODE_EMOJI[summary.mode]} {modeStyle.label}
-          </span>
-          <span>{summary.formattedDate}</span>
-        </div>
+        <span className="mt-2 truncate text-base font-bold text-ink">
+          {summary.title}
+        </span>
+        <span className="mt-0.5 text-xs text-ink-soft">{summary.formattedDate}</span>
 
-        <div className="mt-1.5 flex items-center gap-2 text-xs">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${quorumStyle.dotClass}`} aria-hidden />
+        <span className="mt-3 flex items-center gap-1.5 text-xs">
+          <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${quorumStyle.dotClass}`} />
           <span className={`font-semibold ${quorumStyle.textClass}`}>{summary.quorumLabel}</span>
-          <span className="text-ink-soft">
-            {summary.titularCount}
-            {summary.maxCapacity !== null ? ` / ${summary.maxCapacity}` : ""} van
-          </span>
-        </div>
+        </span>
+        <span className="mt-1 text-xs text-ink-soft">
+          {summary.titularCount}
+          {summary.maxCapacity !== null ? ` / ${summary.maxCapacity}` : ""} van
+        </span>
+
+        <span className="mt-3 font-display text-lg font-extrabold tabular-nums text-cancha">
+          {formatCLP(summary.totalCostCLP)}
+        </span>
       </button>
 
       {/* Eliminar el panorama guardado */}
@@ -112,9 +115,9 @@ function SavedPanoramaCard({
         type="button"
         onClick={handleRemove}
         aria-label={`Eliminar ${summary.title}`}
-        className="shrink-0 border-l border-ink/10 px-3 text-base transition hover:bg-baja-soft active:scale-[0.97]"
+        className="absolute top-3 right-3 grid h-7 w-7 place-items-center rounded-full border border-ink/10 text-sm text-ink-soft transition hover:border-baja hover:bg-baja-soft hover:text-baja active:scale-95"
       >
-        <span aria-hidden className="text-ink-soft transition hover:text-baja">✕</span>
+        <span aria-hidden>✕</span>
       </button>
     </li>
   );

@@ -409,238 +409,244 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
         <ThemeToggle />
       </header>
 
-      {/* Resumen del evento */}
-      <section className="rounded-2xl border border-ink/15 bg-elev p-5">
-        <div className="flex items-center justify-between gap-2">
-          <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${modeStyle.chipClass}`}>
-            {MODE_EMOJI[event.mode]} {modeStyle.label}
-          </span>
-          <span className="text-xs text-ink-soft">
-            {event.maxCapacity !== null ? `Cupo para ${event.maxCapacity}` : "Sin cupo máximo"}
-          </span>
-        </div>
-        <h2 className="mt-3 font-display text-3xl font-extrabold leading-tight tracking-tight text-ink">
-          {event.title}
-        </h2>
-        <p className="mt-1 text-sm text-ink-soft">{formatPanoramaStartsAt(event.startsAt)}</p>
-        {quorum !== null && quorumLabel !== null && (
-          <div className="mt-4">
-            <QuorumSemaphore status={quorum} label={quorumLabel} />
-          </div>
-        )}
-      </section>
-
-      {/* Bienvenida: participa con tu cuenta; el nombre viene del perfil */}
-      {flow === "fresh" && ownAttendee === null ? (
-        <section className="rounded-2xl border border-ink/15 bg-elev p-4">
-          <h2 className="font-display text-lg font-bold tracking-tight text-ink">
-            ¿Vas o no vas?
-          </h2>
-          <p className="mt-0.5 text-sm text-ink-soft">
-            Participas con tu cuenta como{" "}
-            <span className="font-bold text-ink">{user?.displayName}</span>.
-          </p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {STATUS_OPTIONS.map((option) => (
-              <button
-                key={option.status}
-                type="button"
-                disabled={isBusy}
-                onClick={() => void joinAs(option.status)}
-                className={`rounded-xl border px-2 py-2 text-sm font-bold transition active:scale-[0.97] disabled:opacity-60 ${option.inactiveClass}`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          {error !== null && (
-            <p className="mt-2 text-xs font-semibold text-baja" role="alert">
-              {error}
-            </p>
-          )}
-        </section>
-      ) : null}
-
-      {/* Adopción: la fila anónima legacy de este dispositivo puede ser tuya */}
-      {flow === "adoptable" && identity !== null ? (
-        <section className="rounded-2xl border border-wait/40 bg-elev p-4">
-          <h2 className="font-display text-lg font-bold tracking-tight text-ink">
-            Ya habías respondido como {identity.name}
-          </h2>
-          <p className="mt-0.5 text-xs text-ink-soft">
-            En este navegador queda tu respuesta anterior (anónima). Recupérala
-            con tu cuenta: sigue siendo tu fila y tus ítems.
-          </p>
-          <button
-            type="button"
-            disabled={isAdopting}
-            onClick={() => void adoptLegacyRow()}
-            className="mt-3 w-full rounded-xl border border-cancha bg-cancha px-4 py-2.5 text-sm font-bold text-elev transition active:scale-[0.99] disabled:opacity-60"
-          >
-            {isAdopting ? "Recuperando…" : "Recuperar con mi cuenta"}
-          </button>
-          {error !== null && (
-            <p className="mt-2 text-xs font-semibold text-baja" role="alert">
-              {error}
-            </p>
-          )}
-        </section>
-      ) : null}
-
-      {/* Mi respuesta (cuando ya participo con la cuenta) */}
-      {ownAttendee !== null && (
-        <section className="rounded-2xl border border-cancha/40 bg-cancha-soft p-4">
-          <h2 className="font-display text-lg font-bold tracking-tight text-ink">
-            Participas como {ownAttendee.name}
-          </h2>
-          <p className="mt-0.5 text-xs text-ink-soft">
-            Puedes cambiar tu respuesta cuando quieras desde este mismo enlace.
-          </p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {STATUS_OPTIONS.map((option) => {
-              const isActive = ownAttendee.status === option.status;
-              return (
-                <button
-                  key={option.status}
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => void changeMyVote(option.status)}
-                  aria-pressed={isActive}
-                  className={`rounded-xl border px-2 py-2 text-sm font-bold transition active:scale-[0.97] disabled:opacity-60 ${
-                    isActive ? option.activeClass : option.inactiveClass
-                  }`}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-          {ownAttendee !== null && error !== null && (
-            <p className="mt-2 text-xs font-semibold text-baja" role="alert">
-              {error}
-            </p>
-          )}
-        </section>
-      )}
-
-      {/* ¿A dónde vamos? (modo Social): conteos públicos; vota solo "Voy" */}
-      {event.mode === "social" && (
-        <GuestPlaceVote
-          panorama={panorama}
-          ownParticipantId={ownAttendee?.id ?? null}
-          ownStatus={ownAttendee?.status ?? null}
-        />
-      )}
-
-      {/* ¿Qué hay que llevar? (modo Colaborativo): lista pública con nombres;
-          solo "Voy" dentro del cupo añade, toma o libera con su cuenta */}
-      {event.mode === "colaborativo" && (
-        <GuestContributionList
-          panorama={panorama}
-          ownParticipantId={ownAttendee?.id ?? null}
-          ownStatus={ownAttendee?.status ?? null}
-        />
-      )}
-
-      {/* Organizador de equipos (modo Deportivo): reparto público, solo lectura */}
-      {event.mode === "deportivo" && (
-        <GuestTeamOrganizer panorama={panorama} refreshKey={teamsRefreshKey} />
-      )}
-
-      {/* Control de pagos: bloque copiable + tablero; la fila propia del
-          titular con sesión lleva «Ya transferí» / retractar (RF-11) */}
-      <PaymentTreasuryPanel
-        panorama={panorama}
-        payments={payments}
-        selfActions={
-          ownAttendee === null
-            ? undefined
-            : {
-                playerRef: ownAttendee.id,
-                isTitular:
-                  classification?.titulars.some((attendee) => attendee.id === ownAttendee.id) ??
-                  false,
-                isBusy: isSelfPaymentBusy,
-                mark: () => void markSelfTransferred(),
-                retract: () => void retractSelfTransferred(),
-              }
-        }
-      />
-
-      {/* Tablero (solo lectura para invitados: nadie toca la fila ajena) */}
-      {classification !== null && (
-        <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4">
-          <div className="flex items-baseline justify-between">
-            <h2 className="font-display text-lg font-bold tracking-tight text-ink">La lista</h2>
-            <span className="text-xs text-ink-soft">
-              {classification.titulars.length}
-              {event.maxCapacity !== null ? ` de ${event.maxCapacity}` : ""} van ·{" "}
-              {classification.waitlist.length} en espera
-            </span>
-          </div>
-
-          <Group title="Van" situation="dentro del cupo" textClass="text-cancha">
-            {classification.titulars.length === 0 ? (
-              <p className="text-sm italic text-ink-soft">Nadie ha confirmado todavía.</p>
-            ) : (
-              classification.titulars.map((attendee) => (
-                <Row
-                  key={attendee.id}
-                  name={attendee.name}
-                  isOwn={isOwn(attendee.id)}
-                  // En Social no hay "titulares": la fila del organizador es
-                  // la única que lleva chip; los demás van limpios.
-                  badge={
-                    attendee.isCreator === true
-                      ? { label: "Organizador", className: "border-cancha/40 bg-cancha-soft text-cancha" }
-                      : undefined
-                  }
-                  statusLabel={statusLabel(attendee.status)}
-                />
-              ))
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-6">
+        <div className="flex flex-col gap-4">
+          {/* Resumen del evento */}
+          <section className="rounded-2xl border border-ink/15 bg-elev p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${modeStyle.chipClass}`}>
+                {MODE_EMOJI[event.mode]} {modeStyle.label}
+              </span>
+              <span className="text-xs text-ink-soft">
+                {event.maxCapacity !== null ? `Cupo para ${event.maxCapacity}` : "Sin cupo máximo"}
+              </span>
+            </div>
+            <h2 className="mt-3 break-words font-display text-2xl font-extrabold leading-tight tracking-tight text-ink sm:text-3xl">
+              {event.title}
+            </h2>
+            <p className="mt-1 text-sm text-ink-soft">{formatPanoramaStartsAt(event.startsAt)}</p>
+            {quorum !== null && quorumLabel !== null && (
+              <div className="mt-4">
+                <QuorumSemaphore status={quorum} label={quorumLabel} />
+              </div>
             )}
-          </Group>
+          </section>
 
-          {classification.waitlist.length > 0 && (
-            <Group title="En espera" situation="entran si alguien se baja" textClass="text-camino">
-              {classification.waitlist.map((attendee) => (
-                <Row
-                  key={attendee.id}
-                  name={attendee.name}
-                  isOwn={isOwn(attendee.id)}
-                  statusLabel={statusLabel(attendee.status)}
-                />
-              ))}
-            </Group>
+          {/* Bienvenida: participa con tu cuenta; el nombre viene del perfil */}
+          {flow === "fresh" && ownAttendee === null ? (
+            <section className="rounded-2xl border border-ink/15 bg-elev p-4">
+              <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+                ¿Vas o no vas?
+              </h2>
+              <p className="mt-0.5 text-sm text-ink-soft">
+                Participas con tu cuenta como{" "}
+                <span className="font-bold text-ink">{user?.displayName}</span>.
+              </p>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {STATUS_OPTIONS.map((option) => (
+                  <button
+                    key={option.status}
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => void joinAs(option.status)}
+                    className={`rounded-xl border px-2 py-2 text-sm font-bold transition active:scale-[0.97] disabled:opacity-60 ${option.inactiveClass}`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {error !== null && (
+                <p className="mt-2 text-xs font-semibold text-baja" role="alert">
+                  {error}
+                </p>
+              )}
+            </section>
+          ) : null}
+
+          {/* Adopción: la fila anónima legacy de este dispositivo puede ser tuya */}
+          {flow === "adoptable" && identity !== null ? (
+            <section className="rounded-2xl border border-wait/40 bg-elev p-4">
+              <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+                Ya habías respondido como {identity.name}
+              </h2>
+              <p className="mt-0.5 text-xs text-ink-soft">
+                En este navegador queda tu respuesta anterior (anónima). Recupérala
+                con tu cuenta: sigue siendo tu fila y tus ítems.
+              </p>
+              <button
+                type="button"
+                disabled={isAdopting}
+                onClick={() => void adoptLegacyRow()}
+                className="mt-3 w-full rounded-xl border border-cancha bg-cancha px-4 py-2.5 text-sm font-bold text-elev transition active:scale-[0.99] disabled:opacity-60"
+              >
+                {isAdopting ? "Recuperando…" : "Recuperar con mi cuenta"}
+              </button>
+              {error !== null && (
+                <p className="mt-2 text-xs font-semibold text-baja" role="alert">
+                  {error}
+                </p>
+              )}
+            </section>
+          ) : null}
+
+          {/* Mi respuesta (cuando ya participo con la cuenta) */}
+          {ownAttendee !== null && (
+            <section className="rounded-2xl border border-cancha/40 bg-cancha-soft p-4">
+              <h2 className="font-display text-lg font-bold tracking-tight text-ink">
+                Participas como {ownAttendee.name}
+              </h2>
+              <p className="mt-0.5 text-xs text-ink-soft">
+                Puedes cambiar tu respuesta cuando quieras desde este mismo enlace.
+              </p>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {STATUS_OPTIONS.map((option) => {
+                  const isActive = ownAttendee.status === option.status;
+                  return (
+                    <button
+                      key={option.status}
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => void changeMyVote(option.status)}
+                      aria-pressed={isActive}
+                      className={`rounded-xl border px-2 py-2 text-sm font-bold transition active:scale-[0.97] disabled:opacity-60 ${
+                        isActive ? option.activeClass : option.inactiveClass
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {ownAttendee !== null && error !== null && (
+                <p className="mt-2 text-xs font-semibold text-baja" role="alert">
+                  {error}
+                </p>
+              )}
+            </section>
           )}
 
-          {classification.maybe.length > 0 && (
-            <Group title="En duda" situation="aún no responden" textClass="text-wait">
-              {classification.maybe.map((attendee) => (
-                <Row
-                  key={attendee.id}
-                  name={attendee.name}
-                  isOwn={isOwn(attendee.id)}
-                  statusLabel={statusLabel(attendee.status)}
-                />
-              ))}
-            </Group>
+          {/* ¿A dónde vamos? (modo Social): conteos públicos; vota solo "Voy" */}
+          {event.mode === "social" && (
+            <GuestPlaceVote
+              panorama={panorama}
+              ownParticipantId={ownAttendee?.id ?? null}
+              ownStatus={ownAttendee?.status ?? null}
+            />
           )}
 
-          {classification.declined.length > 0 && (
-            <Group title="No pueden" situation="quedaron fuera" textClass="text-baja">
-              {classification.declined.map((attendee) => (
-                <Row
-                  key={attendee.id}
-                  name={attendee.name}
-                  isOwn={isOwn(attendee.id)}
-                  statusLabel={statusLabel(attendee.status)}
-                />
-              ))}
-            </Group>
+          {/* ¿Qué hay que llevar? (modo Colaborativo): lista pública con nombres;
+              solo "Voy" dentro del cupo añade, toma o libera con su cuenta */}
+          {event.mode === "colaborativo" && (
+            <GuestContributionList
+              panorama={panorama}
+              ownParticipantId={ownAttendee?.id ?? null}
+              ownStatus={ownAttendee?.status ?? null}
+            />
           )}
-        </section>
-      )}
+
+          {/* Organizador de equipos (modo Deportivo): reparto público, solo lectura */}
+          {event.mode === "deportivo" && (
+            <GuestTeamOrganizer panorama={panorama} refreshKey={teamsRefreshKey} />
+          )}
+        </div>
+
+        <div className="flex flex-col gap-4">
+          {/* Control de pagos: bloque copiable + tablero; la fila propia del
+              titular con sesión lleva «Ya transferí» / retractar (RF-11) */}
+          <PaymentTreasuryPanel
+            panorama={panorama}
+            payments={payments}
+            selfActions={
+              ownAttendee === null
+                ? undefined
+                : {
+                    playerRef: ownAttendee.id,
+                    isTitular:
+                      classification?.titulars.some((attendee) => attendee.id === ownAttendee.id) ??
+                      false,
+                    isBusy: isSelfPaymentBusy,
+                    mark: () => void markSelfTransferred(),
+                    retract: () => void retractSelfTransferred(),
+                  }
+            }
+          />
+
+          {/* Tablero (solo lectura para invitados: nadie toca la fila ajena) */}
+          {classification !== null && (
+            <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="font-display text-lg font-bold tracking-tight text-ink">La lista</h2>
+                <span className="text-xs text-ink-soft">
+                  {classification.titulars.length}
+                  {event.maxCapacity !== null ? ` de ${event.maxCapacity}` : ""} van ·{" "}
+                  {classification.waitlist.length} en espera
+                </span>
+              </div>
+
+              <Group title="Van" situation="dentro del cupo" textClass="text-cancha">
+                {classification.titulars.length === 0 ? (
+                  <p className="text-sm italic text-ink-soft">Nadie ha confirmado todavía.</p>
+                ) : (
+                  classification.titulars.map((attendee) => (
+                    <Row
+                      key={attendee.id}
+                      name={attendee.name}
+                      isOwn={isOwn(attendee.id)}
+                      // En Social no hay "titulares": la fila del organizador es
+                      // la única que lleva chip; los demás van limpios.
+                      badge={
+                        attendee.isCreator === true
+                          ? { label: "Organizador", className: "border-cancha/40 bg-cancha-soft text-cancha" }
+                          : undefined
+                      }
+                      statusLabel={statusLabel(attendee.status)}
+                    />
+                  ))
+                )}
+              </Group>
+
+              {classification.waitlist.length > 0 && (
+                <Group title="En espera" situation="entran si alguien se baja" textClass="text-camino">
+                  {classification.waitlist.map((attendee) => (
+                    <Row
+                      key={attendee.id}
+                      name={attendee.name}
+                      isOwn={isOwn(attendee.id)}
+                      statusLabel={statusLabel(attendee.status)}
+                    />
+                  ))}
+                </Group>
+              )}
+
+              {classification.maybe.length > 0 && (
+                <Group title="En duda" situation="aún no responden" textClass="text-wait">
+                  {classification.maybe.map((attendee) => (
+                    <Row
+                      key={attendee.id}
+                      name={attendee.name}
+                      isOwn={isOwn(attendee.id)}
+                      statusLabel={statusLabel(attendee.status)}
+                    />
+                  ))}
+                </Group>
+              )}
+
+              {classification.declined.length > 0 && (
+                <Group title="No pueden" situation="quedaron fuera" textClass="text-baja">
+                  {classification.declined.map((attendee) => (
+                    <Row
+                      key={attendee.id}
+                      name={attendee.name}
+                      isOwn={isOwn(attendee.id)}
+                      statusLabel={statusLabel(attendee.status)}
+                    />
+                  ))}
+                </Group>
+              )}
+            </section>
+          )}
+        </div>
+      </div>
 
       {/* Pie del invitado */}
       <p className="mt-1 text-center text-xs text-ink-soft">

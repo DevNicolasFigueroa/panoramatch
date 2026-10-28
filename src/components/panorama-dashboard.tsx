@@ -16,17 +16,15 @@ import {
   getQuorumLabel,
   getQuorumStatus,
 } from "@/core/quota-manager";
-import { splitCost } from "@/core/currency-clp";
+import { formatCLP, splitCost } from "@/core/currency-clp";
 import { withCreatorAttendee } from "@/core/creator-attendee";
 import { MODE_EMOJI, MODE_STYLES } from "@/components/ui-theme";
 import QuorumSemaphore from "@/components/quorum-semaphore";
 import AddFriendForm from "@/components/add-friend-form";
 import AttendeeSections from "@/components/attendee-sections";
-import FinancialPanel from "@/components/financial-panel";
 import PlaceVoteSection from "@/components/place-vote-section";
 import ContributionListSection from "@/components/contribution-list-section";
 import TeamOrganizerPanel from "@/components/team-organizer-panel";
-import PaymentTreasuryPanel from "@/components/payment-treasury-panel";
 import type { PanoramaStoreActions, PlaceVoteState } from "@/lib/use-panorama-store";
 import type { ContributionItem } from "@/core/contribution-list";
 import { buildTitularPlayers, type TeamsState } from "@/core/team-organizer";
@@ -96,98 +94,130 @@ export default function PanoramaDashboard({
   const modeStyle = MODE_STYLES[event.mode];
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Cabecera del panorama */}
-      <section className="rounded-2xl border border-ink/15 bg-elev p-5">
-        <div className="flex items-center justify-between gap-2">
-          <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${modeStyle.chipClass}`}>
-            {MODE_EMOJI[event.mode]} {modeStyle.label}
-          </span>
-          <span className="text-xs text-ink-soft">
-            {event.maxCapacity !== null
-              ? `Cupo para ${event.maxCapacity}`
-              : "Sin cupo máximo"}
-          </span>
-        </div>
+    <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-6">
+      <div className="flex flex-col gap-4">
+        {/* Cabecera del panorama: franja de color por modo + fecha + cuota */}
+        <section className="overflow-hidden rounded-2xl border border-ink/15 bg-elev">
+          <div aria-hidden="true" className={`h-1.5 ${modeStyle.barClass}`} />
+          <div className="p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${modeStyle.chipClass}`}>
+                {MODE_EMOJI[event.mode]} {modeStyle.label}
+              </span>
+              <span className="text-xs text-ink-soft">
+                {event.maxCapacity !== null
+                  ? `Cupo para ${event.maxCapacity}`
+                  : "Sin cupo máximo"}
+              </span>
+            </div>
 
-        <h2 className="mt-3 font-display text-3xl font-extrabold leading-tight tracking-tight text-ink">
-          {event.title}
-        </h2>
-        <p className="mt-1 text-sm text-ink-soft">
-          {formatPanoramaStartsAt(event.startsAt)}
-        </p>
+            <h2 className="mt-3 break-words font-display text-2xl font-extrabold leading-tight tracking-tight text-ink sm:text-3xl">
+              {event.title}
+            </h2>
 
-        <div className="mt-4">
-          <QuorumSemaphore status={quorum} label={getQuorumLabel(quorum, missingCount)} />
-        </div>
-      </section>
+            <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
+              <p className="flex items-center gap-1.5 text-sm text-ink">
+                <CalendarIcon className="h-4 w-4 shrink-0 text-ink-soft" />
+                {formatPanoramaStartsAt(event.startsAt)}
+              </p>
+              {split.canSplit && (
+                <span className="shrink-0 text-xs font-semibold text-ink-soft">
+                  {formatCLP(split.perHeadCLP)} c/u
+                </span>
+              )}
+            </div>
 
-      {/* El enlace compartido: los amigos responden sin crear cuenta */}
-      <ShareLinkSection panoramaId={panorama.id} />
+            <div className="mt-4">
+              <QuorumSemaphore
+                status={quorum}
+                label={getQuorumLabel(quorum, missingCount)}
+                vanCount={classification.titulars.length}
+                maxCapacity={event.maxCapacity}
+              />
+            </div>
+          </div>
+        </section>
 
-      {/* Modo Social: votación de lugares (¿a dónde vamos?) */}
-      {event.mode === "social" && (
-        <PlaceVoteSection attendees={attendees} place={place} actions={actions} />
-      )}
+        {/* El enlace compartido: los amigos responden sin crear cuenta */}
+        <ShareLinkSection panoramaId={panorama.id} />
 
-      {/* Modo Colaborativo: lista de aportes (¿qué hay que llevar?) */}
-      {event.mode === "colaborativo" && (
-        <ContributionListSection
-          allAttendees={allAttendees}
-          creatorName={event.creatorName}
-          checklist={checklist}
-          actions={actions}
+        {/* Modo Social: votación de lugares (¿a dónde vamos?) */}
+        {event.mode === "social" && (
+          <PlaceVoteSection attendees={attendees} place={place} actions={actions} />
+        )}
+
+        {/* Modo Colaborativo: lista de aportes (¿qué hay que llevar?) */}
+        {event.mode === "colaborativo" && (
+          <ContributionListSection
+            allAttendees={allAttendees}
+            creatorName={event.creatorName}
+            checklist={checklist}
+            actions={actions}
+          />
+        )}
+
+        {/* Modo Deportivo: organizador de equipos (sortear, mover, renombrar) */}
+        {event.mode === "deportivo" && (
+          <TeamOrganizerPanel
+            teams={teams}
+            titularPlayers={buildTitularPlayers(allAttendees, event.maxCapacity)}
+            isOrganizer
+            actions={actions}
+          />
+        )}
+      </div>
+
+      <div className="flex flex-col gap-4">
+        {/* Módulo de Confirmación Rápida */}
+        <AddFriendForm onAddFriend={onAddFriend} />
+
+        {/* Asistentes y Espera */}
+        <AttendeeSections
+          classification={classification}
+          maxCapacity={event.maxCapacity}
+          onChangeStatus={onChangeStatus}
         />
-      )}
 
-      {/* Modo Deportivo: organizador de equipos (sortear, mover, renombrar) */}
-      {event.mode === "deportivo" && (
-        <TeamOrganizerPanel
-          teams={teams}
-          titularPlayers={buildTitularPlayers(allAttendees, event.maxCapacity)}
-          isOrganizer
-          actions={actions}
-        />
-      )}
+        {/* La boleta ya no vive aquí: la tab «Tesorería» la presenta junto
+            al control de pagos (única fuente de la cuenta). */}
 
-      {/* Control de pagos (los 3 modos; se oculta sin banco o con costo $0) */}
-      <PaymentTreasuryPanel
-        panorama={panorama}
-        payments={payments}
-        actions={actions}
-      />
-
-      {/* Módulo de Confirmación Rápida */}
-      <AddFriendForm onAddFriend={onAddFriend} />
-
-      {/* Asistentes y Espera */}
-      <AttendeeSections
-        classification={classification}
-        maxCapacity={event.maxCapacity}
-        onChangeStatus={onChangeStatus}
-      />
-
-      {/* La boleta financiera */}
-      <FinancialPanel split={split} />
-
-      {/* Navegación: listado guardado o crear otro (el listado se conserva) */}
-      <div className="mt-1 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={onGoHome}
-          className="rounded-xl border border-ink/25 bg-elev px-3 py-2.5 text-sm font-semibold text-ink transition hover:border-ink/60 active:scale-[0.99]"
-        >
-          Mis panoramas
-        </button>
-        <button
-          type="button"
-          onClick={onGoHome}
-          className="rounded-xl bg-cancha px-3 py-2.5 text-sm font-bold text-elev transition hover:bg-cancha-deep active:scale-[0.99]"
-        >
-          Crear uno nuevo
-        </button>
+        {/* Navegación: listado guardado o crear otro (el listado se conserva) */}
+        <div className="mt-1 grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
+          <button
+            type="button"
+            onClick={onGoHome}
+            className="rounded-xl border border-ink/25 bg-elev px-3 py-2.5 text-sm font-semibold text-ink transition hover:border-ink/60 active:scale-[0.99]"
+          >
+            Mis panoramas
+          </button>
+          <button
+            type="button"
+            onClick={onGoHome}
+            className="rounded-xl bg-cancha px-3 py-2.5 text-sm font-bold text-elev transition hover:bg-cancha-deep active:scale-[0.99]"
+          >
+            Crear uno nuevo
+          </button>
+        </div>
       </div>
     </div>
+  );
+}
+
+/** Icono de fecha (SVG inline) para la fila de fecha del banner. */
+function CalendarIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+      <path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" />
+    </svg>
   );
 }
 

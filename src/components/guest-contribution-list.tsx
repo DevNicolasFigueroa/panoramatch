@@ -241,8 +241,9 @@ export default function GuestContributionList({
   }, [ownStatus, ownParticipantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <section className="rounded-2xl border border-ink/15 bg-elev p-4">
-      <div className="flex items-baseline justify-between gap-2">
+    <section className="relative overflow-hidden rounded-2xl border border-ink/15 bg-elev p-4">
+      <span aria-hidden="true" className="absolute inset-x-0 top-0 h-1.5 bg-ember" />
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">
           ¿Qué hay que llevar?
         </h2>
@@ -274,8 +275,8 @@ export default function GuestContributionList({
               key={item.id}
               className={`rounded-xl border p-2.5 ${isFree ? "border-ink/15 bg-paper" : "border-cancha/40 bg-cancha-soft"}`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-bold text-ink">{item.name}</p>
                   <p className="text-xs font-semibold text-ink-soft">
                     {item.claimedByRef === null

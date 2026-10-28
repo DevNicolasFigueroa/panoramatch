@@ -61,8 +61,9 @@ export default function PlaceVoteSection({ attendees, place, actions }: PlaceVot
   if (!isOpen) {
     const matchName = candidates.find((candidate) => candidate.id === matchCandidateId)?.name ?? "";
     return (
-      <section className="rounded-2xl border border-cancha/40 bg-cancha-soft p-4">
-        <div className="flex items-baseline justify-between gap-2">
+      <section className="relative overflow-hidden rounded-2xl border border-cancha/40 bg-cancha-soft p-4">
+        <span aria-hidden="true" className="absolute inset-x-0 top-0 h-1.5 bg-social" />
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="font-display text-lg font-bold tracking-tight text-ink">
             ¿A dónde vamos?
           </h2>
@@ -78,8 +79,9 @@ export default function PlaceVoteSection({ attendees, place, actions }: PlaceVot
 
   const seedOrFailed = place === null && candidates.length === 0;
   return (
-    <section className="rounded-2xl border border-ink/15 bg-elev p-4">
-      <div className="flex items-baseline justify-between gap-2">
+    <section className="relative overflow-hidden rounded-2xl border border-ink/15 bg-elev p-4">
+      <span aria-hidden="true" className="absolute inset-x-0 top-0 h-1.5 bg-social" />
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">
           ¿A dónde vamos?
         </h2>
@@ -97,7 +99,7 @@ export default function PlaceVoteSection({ attendees, place, actions }: PlaceVot
 
       {/* Votar a nombre de… (delegación; visible solo con anotados a mano) */}
       {delegables.length > 0 && (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
           <label htmlFor="vote-as" className="shrink-0 text-xs font-bold text-ink">
             Votar a nombre de
           </label>
@@ -127,8 +129,8 @@ export default function PlaceVoteSection({ attendees, place, actions }: PlaceVot
           const accent = isLeaderLeading || isTiedLeader ? "border-cancha/50 bg-cancha-soft" : "border-ink/15 bg-paper";
           return (
             <li key={entry.candidateId} className={`rounded-xl border p-2.5 ${accent}`}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-bold text-ink">
                     {entry.name}
                     {isMine && <span className="ml-1 text-cancha">(tu voto)</span>}
@@ -138,7 +140,7 @@ export default function PlaceVoteSection({ attendees, place, actions }: PlaceVot
                     {isLeaderLeading ? " · Match actual" : isTiedLeader ? " · empate" : ""}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() =>

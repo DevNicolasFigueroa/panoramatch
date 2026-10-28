@@ -177,8 +177,9 @@ export default function GuestPlaceVote({ panorama, ownParticipantId, ownStatus }
   }, [ownStatus, myVote?.candidateId, ownParticipantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <section className="rounded-2xl border border-ink/15 bg-elev p-4">
-      <div className="flex items-baseline justify-between gap-2">
+    <section className="relative overflow-hidden rounded-2xl border border-ink/15 bg-elev p-4">
+      <span aria-hidden="true" className="absolute inset-x-0 top-0 h-1.5 bg-social" />
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">¿A dónde vamos?</h2>
         <span className={`text-xs font-semibold ${outcome.status === "tie" ? "text-wait" : "text-cancha"}`}>
           {getMatchStatusLabel(outcome.status)}
@@ -194,8 +195,8 @@ export default function GuestPlaceVote({ panorama, ownParticipantId, ownStatus }
           const accent = isMatch ? "border-cancha bg-cancha-soft" : isLeader ? "border-cancha/50 bg-cancha-soft" : "border-ink/15 bg-paper";
           return (
             <li key={entry.candidateId} className={`rounded-xl border p-2.5 ${accent}`}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-bold text-ink">
                     {isMatch ? "🏆 " : ""}
                     {entry.name}

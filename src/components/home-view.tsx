@@ -23,7 +23,7 @@ export default function HomeView({
   onRemovePanorama: (panoramaId: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5 lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-6">
       <PanoramaForm onCreate={onCreate} />
       <SavedPanoramasList
         savedPanoramas={savedPanoramas}

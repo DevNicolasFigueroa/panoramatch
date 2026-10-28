@@ -76,14 +76,14 @@ function bookedState(): PaymentsState {
   return payments;
 }
 
-describe("Puerta del módulo (RF-1)", () => {
-  test("costo $0 → oculto", () => {
+describe("Puerta del módulo (RF-1, ajustada 28-oct: visible sin bloque bancario)", () => {
+  test("costo $0 sin registros → oculto", () => {
     const state = bookedState();
     assert.equal(isPaymentModuleActive(0, state), false);
   });
 
-  test("sin bloque bancario → oculto", () => {
-    assert.equal(isPaymentModuleActive(30000, createEmptyPaymentsState()), false);
+  test("sin bloque bancario → visible (el módulo lo lleva a cabo; RF-2)", () => {
+    assert.equal(isPaymentModuleActive(30000, createEmptyPaymentsState()), true);
   });
 
   test("costo > 0 + bloque definido → visible", () => {
@@ -99,19 +99,19 @@ describe("Puerta del módulo (RF-1)", () => {
     assert.equal(isPaymentModuleActive(0, state), true);
   });
 
-  test("bloque borrado sin ningún registro → vuelve a ocultarse", () => {
+  test("bloque borrado con costo > 0 → SIGUE visible (el módulo es su encendido)", () => {
     const cleared = setTransferInfo(bookedState(), "   ");
     assert.equal(cleared.ok, true);
-    assert.equal(isPaymentModuleActive(30000, cleared.payments), false);
+    assert.equal(isPaymentModuleActive(30000, cleared.payments), true);
   });
 
-  test("solo transacciones revocadas y sin bloque → oculto", () => {
+  test("solo transacciones revocadas → visible (revertir en el módulo)", () => {
     const titulars = buildTitularPlayers(buildBook(), 3);
     let state = bookedState();
     state = confirmPayment(state, "p1", {}, titulars, 30000, NOW).payments;
     state = revokePayment(state, "p1", undefined, NOW).payments;
     state = setTransferInfo(state, " ").payments;
-    assert.equal(isPaymentModuleActive(30000, state), false);
+    assert.equal(isPaymentModuleActive(30000, state), true);
   });
 });
 
@@ -147,10 +147,17 @@ describe("Cuota actual y vista (RF-4 y RF-6)", () => {
     );
     assert.equal(view.titulars.length, 3);
     assert.equal(view.titulars[0].playerRef, CREATOR);
+    assert.equal(view.titulars[0].isOrganizer, true);
     for (const row of view.titulars) {
       assert.equal(row.flowState, "pending");
-      assert.equal(row.situation, "owing");
-      assert.equal(row.owingCLP, 10000);
+      if (row.isOrganizer) {
+        // El organizador recibe las transferencias: nunca adeuda.
+        assert.equal(row.owingCLP, 0);
+        assert.equal(row.situation, "even");
+      } else {
+        assert.equal(row.situation, "owing");
+        assert.equal(row.owingCLP, 10000);
+      }
       assert.equal(row.creditCLP, 0);
       assert.equal(row.currentQuotaCLP, 10000);
     }
@@ -495,9 +502,25 @@ describe("Cierres «Reembolsada» (RF-9)", () => {
       view.resolvedRefunds.map((refund) => [refund.name, refund.amountCLP]),
       [["Ana", 10000]],
     );
-    // Los totales: recaudado 10000 (la plata ya entró), por devolver 0.
-    assert.equal(view.totals.collectedCLP, 10000);
+    // Recaudado NETO: 10000 entrados − 10000 ya devueltos a Ana = 0;
+    // por devolver 0 (el cierre apaga la pendiente).
+    assert.equal(view.totals.collectedCLP, 0);
     assert.equal(view.totals.toRefundCLP, 0);
+  });
+
+  test("confirmado con reembolso cerrado: fila vuelve a «Pago al día» y recaudado baja", () => {
+    const titulars = buildTitularPlayers(buildBook(), 3);
+    let state = confirmPayment(bookedState(), "p2", {}, titulars, 30000, NOW).payments;
+    // p2 pagó de más: entra el excedente como reembolso pendiente… lo cerramos.
+    state = confirmPayment(state, "p2", { amountCLP: 10000 }, titulars, 30000, NOW).payments;
+    state = resolveRefund(state, "p2", "overpay", titulars, [], 30000, NOW).payments;
+    const view = getPaymentTreasuryView(state, titulars, [], 30000);
+    const row = view.titulars.find((item) => item.playerRef === "p2");
+    assert.ok(row);
+    assert.equal(row.situation, "even"); // «Pago al día» en la interfaz
+    assert.equal(row.creditCLP, 0);
+    assert.equal(row.paidTotalCLP, 10000);
+    assert.equal(view.totals.collectedCLP, 10000);
   });
 
   test("sin devolución pendiente → no hay nada que marcar", () => {
@@ -547,13 +570,13 @@ describe("Totales de tesorería (RF-10)", () => {
     const rest = restPlayers(attendees, titularsAway);
     const view = getPaymentTreasuryView(state, titularsAway, rest, 30000);
     assert.equal(view.totals.collectedCLP, 10000);
-    assert.equal(view.totals.toCollectCLP, 30000);
+    assert.equal(view.totals.toCollectCLP, 20000);
     assert.equal(view.totals.toRefundCLP, 10000);
   });
 
-  test("la fila del organizador suma al por cobrar cuando adeuda", () => {
+  test("la fila del organizador NO suma al por cobrar (recibe las transferencias)", () => {
     const titulars = buildTitularPlayers(buildBook(), 3);
     const view = getPaymentTreasuryView(bookedState(), titulars, [], 30000);
-    assert.equal(view.totals.toCollectCLP, 30000);
+    assert.equal(view.totals.toCollectCLP, 20000);
   });
 });

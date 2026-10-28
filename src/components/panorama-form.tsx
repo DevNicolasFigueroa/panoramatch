@@ -83,7 +83,7 @@ export default function PanoramaForm({
 
   return (
     <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
-      <section className="rounded-2xl border border-ink/15 bg-elev px-5 py-5">
+      <section className="rounded-2xl border border-ink/15 bg-elev p-4 sm:p-6">
         <h2 className="font-display text-2xl font-bold tracking-tight text-ink">
           Nuevo panorama
         </h2>
@@ -156,7 +156,7 @@ export default function PanoramaForm({
         </div>
 
         {/* Cupo + costo */}
-        <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-3">
           <div className="flex flex-col gap-1.5">
             <label htmlFor="maxCapacity" className="text-sm font-semibold text-ink">
               Cupo máximo

@@ -26,6 +26,7 @@ import {
 } from "@/core/payment-treasury";
 import { withCreatorAttendee } from "@/core/creator-attendee";
 import { buildRestPlayers, buildTitularPlayers } from "@/core/team-organizer";
+import { initialsFromName } from "@/core/initials";
 import type { SavedPanorama } from "@/core/types";
 
 const EMPTY_PAYMENTS: PaymentsState = {
@@ -55,13 +56,13 @@ const FLOW_LABEL: Record<string, string> = {
 };
 
 const SITUATION_LABEL: Record<string, string> = {
-  even: "Al día",
+  even: "Pago al día",
   owing: "Debe la diferencia",
   credit: "Saldo a favor",
 };
 
 const REFUND_KIND_LABEL: Record<RefundKind, string> = {
-  exit: "Dejó de ser titular",
+  exit: "Dejó de ser confirmado",
   overpay: "Cuota bajó",
 };
 
@@ -88,6 +89,7 @@ export default function PaymentTreasuryPanel({
   payments,
   actions,
   selfActions,
+  boletaSlot,
 }: {
   panorama: SavedPanorama;
   /** Estado de tesorería cargado; null mientras carga («Cargando los pagos…»). */
@@ -96,6 +98,8 @@ export default function PaymentTreasuryPanel({
   actions?: CreatorActions;
   /** Solo el enlace la recibe: la fila propia del titular con sesión. */
   selfActions?: SelfActions;
+  /** En la página de Tesorería: «La boleta» se integra en la columna derecha junto a reembolsos y recaudación. */
+  boletaSlot?: React.ReactNode;
 }) {
   const state = payments ?? EMPTY_PAYMENTS;
   const isLoading = payments === null;
@@ -187,39 +191,25 @@ export default function PaymentTreasuryPanel({
     );
 
   if (isLoading) {
-    return (
-      <section className="rounded-2xl border border-ink/15 bg-elev p-4" aria-busy="true">
+    const loadingSection = (
+      <section className="min-w-0 rounded-2xl border border-ink/15 bg-elev p-4" aria-busy="true">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">Control de pagos</h2>
         <p className="mt-1 text-sm text-ink-soft">Cargando los pagos…</p>
       </section>
     );
-  }
-  // Puerta del módulo (RF-1): costo > $0 Y bloque definido — o quedan montos
-  // vigentes/resueltos que obligan a mantenerlo abierto (revertir, cerrar devoluciones).
-  if (!isActive) {
-    if (actions === undefined || panorama.event.totalCostCLP <= 0) {
-      // El invitado no ve nada (RF-1) y sin cuota que cobrar no hay captura.
-      return null;
+    if (boletaSlot !== undefined) {
+      return (
+        <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:gap-6">
+          <div className="lg:order-2">{boletaSlot}</div>
+          <div className="min-w-0 lg:order-1">{loadingSection}</div>
+        </div>
+      );
     }
-    // Único punto de encendido: la tarjeta de captura del creador. Sin ella
-    // el módulo jamás arranca (el tablero exige bloque definido).
-    return (
-      <section className="flex flex-col gap-3 rounded-2xl border border-ink/15 bg-elev p-4">
-        <div className="flex items-baseline justify-between gap-2">
-          <h2 className="font-display text-lg font-bold tracking-tight text-ink">Control de pagos</h2>
-          <span className="rounded-full border border-ink/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
-            Apagado
-          </span>
-        </div>
-        <p className="text-sm text-ink-soft">
-          {`Hay ${formatCLP(panorama.event.totalCostCLP)} por repartir, pero faltan los datos de transferencia: el tablero se enciende al guardarlos.`}
-        </p>
-        <div className="rounded-xl border border-ink/15 bg-paper p-3">
-          <h3 className="text-sm font-bold text-ink">Datos de transferencia</h3>
-          {editorBox}
-        </div>
-      </section>
-    );
+    return loadingSection;
+  }
+  // Sin cuota que cobrar ni registros que cerrar, el módulo no existe ($0).
+  if (!isActive) {
+    return boletaSlot !== undefined ? <>{boletaSlot}</> : null;
   }
 
 
@@ -232,14 +222,128 @@ export default function PaymentTreasuryPanel({
     return Number.parseInt(raw, 10);
   };
 
-  return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4">
-      <div className="flex items-baseline justify-between gap-2">
+  const hasRefundsOrTotals =
+    view.pendingRefunds.length > 0 || view.resolvedRefunds.length > 0 || actions !== undefined;
+
+  const refundsAndTotalsContent = (
+    <>
+      {/* Devoluciones PENDIENTES (derivadas: RF-7 y RF-8) */}
+      {view.pendingRefunds.length > 0 && (
+        <div className="rounded-xl border border-baja bg-baja-soft p-3">
+          <h3 className="text-sm font-bold text-baja">Por devolver</h3>
+          <ul className="mt-2 flex flex-col gap-2">
+            {view.pendingRefunds.map((refund) => (
+              <li key={`${refund.playerRef}-${refund.kind}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-elev px-2.5 py-2">
+                <div className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-center sm:gap-1.5">
+                  <span className="truncate text-sm font-bold text-ink">
+                    {refund.name ?? "Ex confirmado"}
+                  </span>
+                  <span className="text-xs text-ink-soft">
+                    {REFUND_KIND_LABEL[refund.kind]}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="text-sm font-bold text-baja tabular-nums">
+                    {formatCLP(refund.amountCLP)}
+                  </span>
+                  {actions !== undefined && (
+                    <button
+                      type="button"
+                      onClick={() => actions.resolveRefund(refund.playerRef, refund.kind)}
+                      className="rounded-lg border border-cancha/50 bg-cancha-soft px-2 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
+                    >
+                      Reembolsada
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Cierres «Reembolsada» registrados (RF-9) */}
+      {view.resolvedRefunds.length > 0 && (
+        <div className="rounded-xl border border-cancha/40 bg-cancha-soft p-3">
+          <h3 className="text-sm font-bold text-cancha">Reembolsadas</h3>
+          <ul className="mt-2 flex flex-col gap-2">
+            {view.resolvedRefunds.map((refund, index) => (
+              <li
+                key={`${refund.playerRef}-${refund.kind}-${refund.resolvedAt}-${index}`}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-elev px-2.5 py-2"
+              >
+                <div className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-center sm:gap-1.5">
+                  <span className="truncate text-sm font-bold text-ink">
+                    {refund.name ?? "Ex confirmado"}
+                  </span>
+                  <span className="text-xs text-ink-soft">
+                    {REFUND_KIND_LABEL[refund.kind]} · {refund.resolvedAt.replace("T", " · ")}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="text-sm font-bold text-cancha tabular-nums">
+                    {formatCLP(refund.amountCLP)}
+                  </span>
+                  {actions !== undefined && (
+                    <button
+                      type="button"
+                      onClick={() => actions.reopenRefund(refund.playerRef, refund.kind)}
+                      className="rounded-lg border border-ink/15 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-ink/50 hover:text-ink active:scale-[0.97]"
+                    >
+                      Reabrir
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Totales de tesorería (RF-10): solo el creador, con la barra de recaudación */}
+      {actions !== undefined && (() => {
+        const expectedCLP = view.totals.collectedCLP + view.totals.toCollectCLP;
+        const collectedPercent =
+          expectedCLP > 0 ? Math.round((view.totals.collectedCLP / expectedCLP) * 100) : null;
+        return (
+          <div className="rounded-xl border border-ink/15 bg-paper p-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-sm font-bold text-ink">Recaudación en vivo</h3>
+              {collectedPercent !== null && (
+                <span className="font-display text-xs font-extrabold tabular-nums text-cancha">
+                  {collectedPercent}%
+                </span>
+              )}
+            </div>
+            {collectedPercent !== null && (
+              <div className="mt-2" aria-hidden="true">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-ink/10">
+                  <div
+                    className="h-full rounded-full bg-cancha transition-[width] duration-500 motion-reduce:transition-none"
+                    style={{ width: `${collectedPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            <dl className="mt-2 grid grid-cols-1 gap-2 text-center min-[360px]:grid-cols-3">
+              <Total title="Recaudado" value={formatCLP(view.totals.collectedCLP)} valueClass="text-cancha" />
+              <Total title="Por cobrar" value={formatCLP(view.totals.toCollectCLP)} valueClass="text-baja" />
+              <Total title="Por devolver" value={formatCLP(view.totals.toRefundCLP)} valueClass="text-wait" />
+            </dl>
+          </div>
+        );
+      })()}
+    </>
+  );
+
+  const controlSection = (
+    <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4 sm:p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-display text-lg font-bold tracking-tight text-ink">Control de pagos</h2>
         <span className="text-xs text-ink-soft">
           {view.titulars.length > 0
-            ? `${formatCLP(view.currentQuotaCLP)} por titular${view.surplusCLP > 0 ? ` · pozo ${formatCLP(view.surplusCLP)}` : ""}`
-            : "Sin titulares todavía"}
+            ? `${formatCLP(view.currentQuotaCLP)} por confirmado${view.surplusCLP > 0 ? ` · pozo ${formatCLP(view.surplusCLP)}` : ""}`
+            : "Sin confirmados todavía"}
         </span>
       </div>
 
@@ -268,13 +372,40 @@ export default function PaymentTreasuryPanel({
       {/* Tablero por titular, en orden de confirmación (RF-4) */}
       <div className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between">
-          <h3 className="text-sm font-bold text-ink">Titulares</h3>
+          <h3 className="text-sm font-bold text-ink">Confirmados</h3>
           <span className="text-xs text-ink-soft">cuota {formatCLP(view.currentQuotaCLP)}</span>
         </div>
         <ul className="flex flex-col gap-2">
           {view.titulars.map((titular) => {
             const isOwn = selfActions !== undefined && selfActions.playerRef === titular.playerRef;
             const hasVigentePayment = titular.paidTotalCLP > 0;
+
+            /* Fila del organizador: ES quien recibe las transferencias,
+               así que no se le muestra adeudo, devolución ni acciones. */
+            if (titular.isOrganizer) {
+              return (
+                <li
+                  key={titular.playerRef}
+                  className="rounded-xl border border-cancha/40 bg-paper p-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-cancha-soft font-display text-[10px] font-bold text-cancha"
+                      >
+                        {initialsFromName(titular.name)}
+                      </span>
+                      <span className="min-w-0 truncate text-sm font-bold text-ink">{titular.name}</span>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-cancha/40 bg-cancha-soft px-2 py-0.5 text-[10px] font-semibold text-cancha">
+                      Recibe las transferencias
+                    </span>
+                  </div>
+                </li>
+              );
+            }
+
             return (
               <li
                 key={titular.playerRef}
@@ -286,9 +417,15 @@ export default function PaymentTreasuryPanel({
                       : "border-ink/15"
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-sm font-bold text-ink">{titular.name}</span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-ink/10 font-display text-[10px] font-bold text-ink-soft"
+                    >
+                      {initialsFromName(titular.name)}
+                    </span>
+                    <span className="min-w-0 truncate text-sm font-bold text-ink">{titular.name}</span>
                     <span
                       className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-semibold ${FLOW_CHIP[titular.flowState]}`}
                     >
@@ -300,7 +437,7 @@ export default function PaymentTreasuryPanel({
                   </span>
                 </div>
 
-                <div className="mt-1.5 flex items-center justify-between gap-2">
+                <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                   <span
                     className={`rounded-full border px-1.5 py-px text-[10px] font-semibold ${SITUATION_CHIP[titular.situation]}`}
                   >
@@ -320,7 +457,7 @@ export default function PaymentTreasuryPanel({
 
                 {/* Acciones del creador en la fila (RF-5) */}
                 {actions !== undefined && (
-                  <div className="mt-2 flex items-center justify-end gap-1.5">
+                  <div className="mt-2.5 flex flex-wrap items-center justify-end gap-1.5">
                     <input
                       inputMode="numeric"
                       value={confirmDrafts[titular.playerRef] ?? ""}
@@ -332,7 +469,7 @@ export default function PaymentTreasuryPanel({
                       }
                       placeholder={formatCLP(titular.currentQuotaCLP).slice(1)}
                       aria-label={`Monto transferido de ${titular.name}`}
-                      className="w-24 rounded-lg border border-ink/20 bg-elev px-2 py-1 text-right text-xs font-bold tabular-nums text-ink outline-none focus:border-ink/50"
+                      className="w-24 rounded-lg border border-ink/20 bg-elev px-2 py-1 text-right text-xs font-bold tabular-nums text-ink outline-none focus:border-ink/50 sm:w-28"
                     />
                     <button
                       type="button"
@@ -382,97 +519,37 @@ export default function PaymentTreasuryPanel({
           })}
           {view.titulars.length === 0 && (
             <li className="rounded-xl border border-dashed border-ink/20 px-3 py-2 text-center text-sm italic text-ink-soft">
-              Sin titulares vigentes todavía.
+              Sin confirmados vigentes todavía.
             </li>
           )}
         </ul>
       </div>
 
-      {/* Devoluciones PENDIENTES (derivadas: RF-7 y RF-8) */}
-      {view.pendingRefunds.length > 0 && (
-        <div className="rounded-xl border border-baja bg-baja-soft p-3">
-          <h3 className="text-sm font-bold text-baja">Por devolver</h3>
-          <ul className="mt-2 flex flex-col gap-2">
-            {view.pendingRefunds.map((refund) => (
-              <li key={`${refund.playerRef}-${refund.kind}`} className="flex items-center justify-between gap-2 rounded-lg bg-elev px-2.5 py-2">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate text-sm font-bold text-ink">
-                    {refund.name ?? "Ex titular"}
-                  </span>
-                  <span className="shrink-0 text-xs text-ink-soft">
-                    {REFUND_KIND_LABEL[refund.kind]}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <span className="text-sm font-bold text-baja tabular-nums">
-                    {formatCLP(refund.amountCLP)}
-                  </span>
-                  {actions !== undefined && (
-                    <button
-                      type="button"
-                      onClick={() => actions.resolveRefund(refund.playerRef, refund.kind)}
-                      className="rounded-lg border border-cancha/50 bg-cancha-soft px-2 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
-                    >
-                      Reembolsada
-                    </button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Cierres «Reembolsada» registrados (RF-9) */}
-      {view.resolvedRefunds.length > 0 && (
-        <div className="rounded-xl border border-cancha/40 bg-cancha-soft p-3">
-          <h3 className="text-sm font-bold text-cancha">Reembolsadas</h3>
-          <ul className="mt-2 flex flex-col gap-2">
-            {view.resolvedRefunds.map((refund, index) => (
-              <li
-                key={`${refund.playerRef}-${refund.kind}-${refund.resolvedAt}-${index}`}
-                className="flex items-center justify-between gap-2 rounded-lg bg-elev px-2.5 py-2"
-              >
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate text-sm font-bold text-ink">
-                    {refund.name ?? "Ex titular"}
-                  </span>
-                  <span className="shrink-0 text-xs text-ink-soft">
-                    {REFUND_KIND_LABEL[refund.kind]} · {refund.resolvedAt.replace("T", " · ")}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <span className="text-sm font-bold text-cancha tabular-nums">
-                    {formatCLP(refund.amountCLP)}
-                  </span>
-                  {actions !== undefined && (
-                    <button
-                      type="button"
-                      onClick={() => actions.reopenRefund(refund.playerRef, refund.kind)}
-                      className="rounded-lg border border-ink/15 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-ink/50 hover:text-ink active:scale-[0.97]"
-                    >
-                      Reabrir
-                    </button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Totales de tesorería (RF-10): solo el creador */}
-      {actions !== undefined && (
-        <div className="rounded-xl border border-ink/15 bg-paper p-3">
-          <h3 className="text-sm font-bold text-ink">Tesorería</h3>
-          <dl className="mt-2 grid grid-cols-3 gap-2 text-center">
-            <Total title="Recaudado" value={formatCLP(view.totals.collectedCLP)} valueClass="text-cancha" />
-            <Total title="Por cobrar" value={formatCLP(view.totals.toCollectCLP)} valueClass="text-baja" />
-            <Total title="Por devolver" value={formatCLP(view.totals.toRefundCLP)} valueClass="text-wait" />
-          </dl>
-        </div>
-      )}
+      {boletaSlot === undefined && refundsAndTotalsContent}
     </section>
+  );
+
+  if (boletaSlot === undefined) {
+    return controlSection;
+  }
+
+  return (
+    <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:grid-rows-[auto_1fr] lg:items-start lg:gap-6">
+      {/* La boleta: arriba en móvil, columna derecha superior en escritorio */}
+      <div className="lg:col-start-2 lg:row-start-1">{boletaSlot}</div>
+
+      {/* Control de pagos: en medio en móvil, columna izquierda en escritorio */}
+      <div className="min-w-0 lg:col-start-1 lg:row-span-2 lg:row-start-1">
+        {controlSection}
+      </div>
+
+      {/* Reembolsos y Recaudación en vivo: abajo en móvil, columna derecha (al lado del control de pagos) en escritorio */}
+      {hasRefundsOrTotals && (
+        <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4 sm:p-5 lg:col-start-2 lg:row-start-2">
+          {refundsAndTotalsContent}
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -486,9 +563,9 @@ function Total({
   valueClass: string;
 }) {
   return (
-    <div className="rounded-lg bg-elev px-2 py-2">
-      <dt className="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">{title}</dt>
-      <dd className={`mt-0.5 font-display text-base font-extrabold tabular-nums ${valueClass}`}>
+    <div className="min-w-0 rounded-lg bg-elev px-1.5 py-2 sm:px-2">
+      <dt className="truncate text-[10px] font-semibold uppercase tracking-wide text-ink-soft">{title}</dt>
+      <dd className={`mt-0.5 truncate font-display text-sm font-extrabold tabular-nums sm:text-base ${valueClass}`}>
         {value}
       </dd>
     </div>

@@ -18,7 +18,7 @@ export default async function ParticipantPanoramaPage({
     notFound();
   }
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-5 px-4 pt-7 pb-12 sm:max-w-lg">
+    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-5 px-4 pt-5 pb-12 sm:px-6 sm:pt-7 lg:px-8">
       <GuestParticipationView panoramaId={id} />
     </main>
   );

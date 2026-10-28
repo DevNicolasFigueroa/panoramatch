@@ -206,8 +206,8 @@ export default function LoginView({
   };
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col justify-center gap-8 px-4 py-8 sm:gap-10 sm:px-8 sm:py-12">
-      <div className="grid items-center gap-8 sm:grid-cols-[minmax(0,1fr)_400px] sm:gap-12">
+    <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col justify-center gap-8 px-4 py-8 sm:gap-10 sm:px-6 sm:py-12 lg:px-8">
+      <div className="mx-auto grid w-full max-w-md items-center gap-8 md:max-w-none md:grid-cols-[minmax(0,1fr)_380px] md:gap-10 lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-12">
         {/* Presentación: por qué vale la pena tener tu cuenta aquí */}
         <header className="-order-1">
           <h1 className="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
