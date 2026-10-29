@@ -17,6 +17,11 @@ import type { PlaceCandidate, PlaceVoteRecord } from "@/core/place-vote";
 import type { ContributionItem } from "@/core/contribution-list";
 import type { TeamAssignment, TeamSide, TeamVacancy, TeamsState } from "@/core/team-organizer";
 import type {
+  PaymentReceipt,
+  ReceiptsState,
+  TreasurySummaryMetrics,
+} from "@/core/payment-receipt";
+import type {
   PaymentClaim,
   PaymentsState,
   RefundKind,
@@ -1020,6 +1025,357 @@ export async function retractSelfTransferRow(
 ): Promise<void> {
   const { error } = await client.rpc("retract_payment_transfer", {
     p_panorama_id: panoramaId,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/* ─────────────── Comprobantes de pago (spec 005) ─────────────── */
+
+/** Bucket PRIVADO de comprobantes: ruta y acceso solo por URL firmada. */
+export const RECEIPTS_BUCKET = "panorama-comprobantes";
+
+/** Filas de `public.panorama_payment_receipts` (una vigente por persona). */
+export interface PaymentReceiptRow {
+  id: string;
+  panorama_id: string;
+  participant_id: string;
+  storage_path: string;
+  mime_type: string;
+  byte_size: number;
+  uploaded_at: string;
+  confirmed_at: string | null;
+}
+
+/**
+ * Conviención de ruta del objeto: `{panorama}/{participante}/receipt-…`.
+ * Los policies del bucket la validan (dueño de fila o creador del panorama).
+ */
+export function buildReceiptStoragePath(
+  panoramaId: string,
+  participantId: string,
+  extension: string,
+): string {
+  return `${panoramaId}/${participantId}/receipt-${Date.now()}.${extension}`;
+}
+
+/** Extensión por MIME del comprobante (los tres formatos permitidos). */
+export function getReceiptFileExtension(mimeType: string): string {
+  switch (mimeType) {
+    case "image/png":
+      return "png";
+    case "image/webp":
+      return "webp";
+    default:
+      return "jpg";
+  }
+}
+
+function mapReceiptRowToDomain(row: PaymentReceiptRow): PaymentReceipt {
+  return {
+    playerRef: row.participant_id,
+    storagePath: row.storage_path,
+    mimeType: row.mime_type as PaymentReceipt["mimeType"],
+    byteSize: row.byte_size,
+    uploadedAt: mapTimestampToLocalText(row.uploaded_at),
+    confirmedAt: row.confirmed_at === null ? null : mapTimestampToLocalText(row.confirmed_at),
+  };
+}
+
+/**
+ * Lee los comprobantes vigentes visibles para quien pide:
+ * el INVITADO ve solo SU fila (RLS `payment_receipts_owner_read`) y el
+ * CREADOR las ve todas (`payment_receipts_creator_all`).
+ */
+export async function fetchReceiptRows(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<ReceiptsState> {
+  const { data, error } = await client
+    .from("panorama_payment_receipts")
+    .select("id,panorama_id,participant_id,storage_path,mime_type,byte_size,uploaded_at,confirmed_at")
+    .eq("panorama_id", panoramaId);
+
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  const rows = (data ?? []) as PaymentReceiptRow[];
+  return { receipts: rows.map(mapReceiptRowToDomain) };
+}
+
+/** Filas de la vista propia `participant_payment_state` (solo TU fila). */
+export interface OwnPaymentStateRow {
+  id: string;
+  panorama_id: string;
+  name: string;
+  status: AttendanceStatus;
+  confirmed_order: number | null;
+  created_at: string;
+  payment_transfer_claimed_at: string | null;
+  payment_transfer_rejection_note: string | null;
+}
+
+/**
+ * La fila propia de pago del invitado (vista definer del servidor):
+ * marca «Ya transferí» y nota de rechazo AHORA viven aquí (esas columnas
+ * de la base ya no son legibles directamente por nadie con cuenta).
+ */
+export async function fetchOwnPaymentStateRow(
+  client: SupabaseClient,
+): Promise<OwnPaymentStateRow | null> {
+  const { data, error } = await client
+    .from("participant_payment_state")
+    .select("id,panorama_id,name,status,confirmed_order,created_at,payment_transfer_claimed_at,payment_transfer_rejection_note")
+    .maybeSingle();
+
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  return (data as OwnPaymentStateRow | null) ?? null;
+}
+
+/** Resumen ANÓNIMO del pozo que devuelve la RPC del servidor. */
+export interface TreasurySummaryServerRow {
+  collected_net_clp: number;
+  to_collect_clp: number;
+  paid_guests: number;
+  guest_total: number;
+  current_quota_clp: number;
+  surplus_clp: number;
+}
+
+/**
+ * Métricas anónimas del pozo (RF-7): la RPC definer `get_treasury_summary`
+ * acepta cualquier sesión y solo suelta CIFRAS — el invitado jamás consulta
+ * filas de terceros desde el navegador. El % sale de la fórmula del núcleo
+ * (`computeAnonymousSummary`): techo 100 y 0 % con base vacía.
+ */
+export async function fetchTreasurySummaryRow(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<TreasurySummaryMetrics | null> {
+  const { data, error } = await client.rpc("get_treasury_summary", {
+    p_panorama_id: panoramaId,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as TreasurySummaryServerRow | null;
+  if (row === null || row === undefined) {
+    return null;
+  }
+  const base = row.collected_net_clp + row.to_collect_clp;
+  return {
+    collectedNetCLP: row.collected_net_clp,
+    toCollectCLP: row.to_collect_clp,
+    paidGuests: row.paid_guests,
+    guestTotal: row.guest_total,
+    percent: base > 0 ? Math.min(100, Math.round((row.collected_net_clp / base) * 100)) : 0,
+  };
+}
+
+/** Fila del estado de comprobantes para el CREADOR (RPC definer). */
+export interface ReceiptsStateRow {
+  participant_id: string;
+  name: string;
+  status: AttendanceStatus;
+  claimed_at: string | null;
+  rejection_note: string | null;
+  storage_path: string | null;
+  mime_type: string | null;
+  byte_size: number | null;
+  uploaded_at: string | null;
+  confirmed_at: string | null;
+}
+
+/**
+ * Estado de comprobantes de TODA la fila del panorama, solo para el creador:
+ * marca, nota de rechazo y comprobante por persona (lo usa el panel de
+ * Tesorería — el invitado jamás puede llamarlo: RPC definer lo niega).
+ */
+export async function fetchCreatorReceiptsStateRow(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<ReceiptsStateRow[]> {
+  const { data, error } = await client.rpc("get_panorama_receipts_state", {
+    p_panorama_id: panoramaId,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  return ((data ?? []) as ReceiptsStateRow[]).map((row) => ({
+    ...row,
+    byte_size: row.byte_size ?? 0,
+  }));
+}
+
+/* ─────────────── Storage de comprobantes ─────────────── */
+
+/**
+ * Sube el objeto al bucket privado. Se llama ANTES de la RPC de marca:
+ * el comprobante y su estado «En revisión» nacen juntos, y si la RPC
+ * falla el llamador limpia el objeto con `removeReceiptObjectRow`.
+ * Devuelve el MIME/peso CON los que la base validó (paridad con lo que
+ * la RPC cruzará contra el metadata real del objeto).
+ */
+export async function uploadReceiptObjectRow(
+  client: SupabaseClient,
+  payload: { storagePath: string; file: File; mimeType: string },
+): Promise<{ storagePath: string; byteSize: number }> {
+  const { data, error } = await client.storage
+    .from(RECEIPTS_BUCKET)
+    .upload(payload.storagePath, payload.file, {
+      contentType: payload.mimeType,
+      cacheControl: "3600",
+      upsert: false,
+    });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  const uploaded = data as { path?: string } | null;
+  return {
+    storagePath: uploaded?.path ?? payload.storagePath,
+    byteSize: payload.file.size,
+  };
+}
+
+/** URL firmada de CORTA vida para miniatura/visor (5 minutos). */
+export async function fetchSignedReceiptUrlRow(
+  client: SupabaseClient,
+  storagePath: string,
+): Promise<string | null> {
+  const { data, error } = await client.storage
+    .from(RECEIPTS_BUCKET)
+    .createSignedUrl(storagePath, 300);
+  if (error !== null || data === null) {
+    return null;
+  }
+  return (data as { signedUrl?: string }).signedUrl ?? null;
+}
+
+/**
+ * Borrado best-effort del objeto huérfano (falló la RPC tras la subida).
+ * Los demás caminos (reemplazo/retracto/rechazo/cascada) limpian el
+ * objeto en el SERVIDOR con el trigger de la base.
+ */
+export async function removeReceiptObjectRow(
+  client: SupabaseClient,
+  storagePath: string,
+): Promise<boolean> {
+  // Best-effort: nunca rompe el flujo principal por un error de storage.
+  try {
+    const { error } = await client.storage.from(RECEIPTS_BUCKET).remove([storagePath]);
+    return error === null;
+  } catch {
+    return false;
+  }
+}
+
+/* ─────────────── RPCs del flujo con comprobante (005) ─────────────── */
+
+/**
+ * Marca «Ya transferí» CON el comprobante (RF-3): la RPC registra marca
+ * y fila de comprobante en UNA transacción y valida el MIME/peso REALES
+ * del objeto subido. `byteSize` debe ser el peso real del archivo.
+ */
+export async function submitTransferClaimRow(
+  client: SupabaseClient,
+  payload: {
+    panoramaId: string;
+    storagePath: string;
+    mimeType: string;
+    byteSize: number;
+  },
+): Promise<void> {
+  const { error } = await client.rpc("submit_transfer_claim", {
+    p_panorama_id: payload.panoramaId,
+    p_storage_path: payload.storagePath,
+    p_mime_type: payload.mimeType,
+    p_byte_size: payload.byteSize,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Reemplazo (o primer adjunto a una marca legacy de la era 004, D2) del
+ * comprobante en «En revisión». El objeto ANTERIOR lo borra el trigger
+ * de la base al pisar el `storage_path`.
+ */
+export async function updateActiveReceiptRow(
+  client: SupabaseClient,
+  payload: {
+    panoramaId: string;
+    storagePath: string;
+    mimeType: string;
+    byteSize: number;
+  },
+): Promise<void> {
+  const { error } = await client.rpc("update_payment_receipt", {
+    p_panorama_id: payload.panoramaId,
+    p_storage_path: payload.storagePath,
+    p_mime_type: payload.mimeType,
+    p_byte_size: payload.byteSize,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Respaldo post-cierre (D4) del dueño de fila: «Pagado» a mano SIN
+ * comprobante; la RPC fija `confirmed_at` con el sello del pago.
+ */
+export async function attachReceiptPostCloseRow(
+  client: SupabaseClient,
+  payload: {
+    panoramaId: string;
+    storagePath: string;
+    mimeType: string;
+    byteSize: number;
+  },
+): Promise<void> {
+  const { error } = await client.rpc("attach_post_close_receipt", {
+    p_panorama_id: payload.panoramaId,
+    p_storage_path: payload.storagePath,
+    p_mime_type: payload.mimeType,
+    p_byte_size: payload.byteSize,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Rechazo del creador (RF-5): nota opcional en español hasta 500 chars. */
+export async function rejectPaymentTransferRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; participantId: string; note: string | null },
+): Promise<void> {
+  const { error } = await client.rpc("reject_payment_transfer", {
+    p_panorama_id: payload.panoramaId,
+    p_participant_id: payload.participantId,
+    ...(payload.note !== null && payload.note !== ""
+      ? { p_note: payload.note }
+      : { p_note: null }),
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+}
+
+/** Edición de la nota mientras la fila siga «Pendiente» (D3, creador). */
+export async function updateRejectionNoteRow(
+  client: SupabaseClient,
+  payload: { panoramaId: string; participantId: string; note: string | null },
+): Promise<void> {
+  const { error } = await client.rpc("update_rejection_note", {
+    p_panorama_id: payload.panoramaId,
+    p_participant_id: payload.participantId,
+    ...(payload.note !== null && payload.note !== ""
+      ? { p_note: payload.note }
+      : { p_note: null }),
   });
   if (error !== null) {
     throw new Error(error.message);
