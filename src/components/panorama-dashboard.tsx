@@ -242,7 +242,7 @@ function ShareLinkSection({ panoramaId }: { panoramaId: string }) {
         Que ellos respondan solos
       </h2>
       <p className="mt-0.5 text-sm text-ink-soft">
-        Comparte este enlace: tus amigos marcan Voy / En duda / No puedo sin crear cuenta.
+        Comparte este enlace: tus amigos ven la vista previa del panorama e inician sesión para confirmar Voy / En duda / No puedo.
       </p>
       <button
         type="button"

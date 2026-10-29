@@ -4,9 +4,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseEnv } from "@/lib/supabase-env";
 
 /**
- * Refresca la sesión de Supabase en cada petición (patrón de @supabase/ssr)
- * y protege las rutas de participación: auth universal, nadie responde un
- * panorama sin sesión. La protección de "/" vive en su server component.
+ * Refresca la sesión de Supabase en cada petición (patrón de @supabase/ssr).
+ * Los enlaces `/p/<panorama_id>` permiten vista previa pública; al intentar
+ * registrar asistencia o votar sin sesión, la vista redirige a `/login?next=…`.
+ * La protección de "/" vive en su server component.
  */
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -27,16 +28,7 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  const { data } = await supabase.auth.getUser();
-  const path = request.nextUrl.pathname;
-
-  // /p/<panorama_id>: solo con sesión; de vuelta va al login con `next`.
-  if (data.user === null && path.startsWith("/p/")) {
-    const redirectTo = request.nextUrl.clone();
-    redirectTo.pathname = "/login";
-    redirectTo.search = `?next=${encodeURIComponent(`${path}${request.nextUrl.search}`)}`;
-    return NextResponse.redirect(redirectTo);
-  }
+  await supabase.auth.getUser();
 
   return supabaseResponse;
 }

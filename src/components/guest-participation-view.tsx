@@ -1,10 +1,13 @@
 "use client";
 
 /**
- * Vista del panorama compartido con AUTH UNIVERSAL: quien abre el enlace
- * necesita sesión (Google o correo) y su nombre sale del perfil, no se
- * escribe a mano. La fila `participants` queda ligada a su `auth_user_id`
- * y solo él puede tocarla (RLS la valida con `auth.uid()`).
+ * Vista del panorama compartido (`/p/<id>`):
+ * - Sin sesión: muestra la vista previa del panorama (cabecera, quórum,
+ *   tablero del modo y lista de asistentes). Al intentar registrar su
+ *   asistencia o votar, redirige a `/login?next=/p/<id>`.
+ * - Con sesión: el participante confirma con su cuenta (Google o correo) y su
+ *   nombre sale del perfil. La fila `participants` queda ligada a su
+ *   `auth_user_id` y solo él puede tocarla (RLS la valida con `auth.uid()`).
  *
  * Las filas anónimas de la era sin cuenta (con `guest_secret`) se ADOPTAN
  * con la función segura `adopt_anonymous_participant` cuando la identidad
@@ -58,15 +61,6 @@ const SPLASH = (
   </div>
 );
 
-const NEED_LOGIN = (
-  <div className="mt-16 rounded-2xl border border-ink/15 bg-elev p-6 text-center">
-    <h2 className="font-display text-xl font-bold text-ink">Inicia sesión para responder</h2>
-    <p className="mt-2 text-sm text-ink-soft">
-      Este panorama ahora pide sesión (Google o correo) para participar.
-    </p>
-  </div>
-);
-
 const MISSING = (
   <div className="mt-16 rounded-2xl border border-ink/15 bg-elev p-6 text-center">
     <h2 className="font-display text-xl font-bold text-ink">Panorama no disponible</h2>
@@ -93,39 +87,56 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
   const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
   const [isSelfPaymentBusy, setIsSelfPaymentBusy] = useState(false);
 
-  const canLoad = isAuthReady && user !== null;
+  /** Redirige al login conservando el retorno a este panorama (`/login?next=/p/<id>`). */
+  const redirectToLogin = useCallback(() => {
+    const target = `/p/${panoramaId}`;
+    document.cookie = `panoramatch_next=${encodeURIComponent(target)}; path=/; max-age=300; SameSite=Lax`;
+    router.push(`/login?next=${encodeURIComponent(target)}`);
+  }, [router, panoramaId]);
 
+  // Carga del panorama: funciona con o sin sesión (vista previa pública).
   useEffect(() => {
     if (!isPanoramaIdLike(panoramaId)) {
       setIsInvalid(true);
       return;
     }
-    if (!canLoad) {
-      return;
-    }
     setIdentity(getGuestIdentity(panoramaId));
     const client = getSupabaseBrowserClient();
+    let cancelled = false;
     const run = async () => {
       try {
         const loaded = await fetchPanoramaById(client, panoramaId);
+        if (cancelled) {
+          return;
+        }
         if (loaded === null) {
           setIsInvalid(true);
         } else {
           setPanorama(loaded);
         }
       } catch {
-        setFailedToLoad(true);
+        if (!cancelled) {
+          setFailedToLoad(true);
+        }
       }
     };
     void run();
-  }, [panoramaId, canLoad]);
+    return () => {
+      cancelled = true;
+    };
+  }, [panoramaId]);
 
-  // Carga del tablero de pagos (los 3 modos): se repite con el bump de la
-  // marca propia («Ya transferí» / retracto) para releer las marcas.
+  // Carga del tablero de pagos (solo con sesión activa; anónimos no leen datos
+  // bancarios por RLS): se repite con el bump de la marca propia.
   const loadedPanoramaId = panorama?.id ?? null;
+  const currentUserId = user?.userId ?? null;
   useEffect(() => {
     if (loadedPanoramaId === null) {
       setPayments(null);
+      return;
+    }
+    if (currentUserId === null) {
+      setPayments(createEmptyPaymentsState());
       return;
     }
     let cancelled = false;
@@ -145,7 +156,7 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     return () => {
       cancelled = true;
     };
-  }, [loadedPanoramaId, paymentsRefreshKey]);
+  }, [loadedPanoramaId, currentUserId, paymentsRefreshKey]);
 
   const flow = resolveGuestFlow(identity, panorama, user?.userId ?? null);
   // El asistente propio: la fila ligada a la cuenta de la sesión.
@@ -194,10 +205,14 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     [panorama, guestQuorumTarget],
   );
 
-  /** El usuario entra a la lista con el estado elegido y SU cuenta. */
+  /** El usuario entra a la lista con el estado elegido y SU cuenta; sin sesión va a /login. */
   const joinAs = useCallback(
     async (status: AttendanceStatus) => {
-      if (panorama === null || user === null) {
+      if (panorama === null) {
+        return;
+      }
+      if (user === null) {
+        redirectToLogin();
         return;
       }
       // El nombre viene del perfil; el choque de duplicados se valida igual.
@@ -232,12 +247,16 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
         setIsBusy(false);
       }
     },
-    [panorama, user, panoramaId],
+    [panorama, user, panoramaId, redirectToLogin],
   );
 
   /** Adopta la fila anónima legacy de este dispositivo con la sesión actual. */
   const adoptLegacyRow = useCallback(async () => {
-    if (identity === null || panorama === null || user === null) {
+    if (identity === null || panorama === null) {
+      return;
+    }
+    if (user === null) {
+      redirectToLogin();
       return;
     }
     setIsAdopting(true);
@@ -266,7 +285,7 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     } finally {
       setIsAdopting(false);
     }
-  }, [identity, panorama, user, panoramaId]);
+  }, [identity, panorama, user, panoramaId, redirectToLogin]);
 
   /** Cambia SOLO el voto del propio asistente (RLS: auth_user_id = sesión). */
   const changeMyVote = useCallback(
@@ -387,10 +406,7 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     return MISSING;
   }
   if (panorama === null) {
-    if (!isAuthReady) {
-      return SPLASH;
-    }
-    return failedToLoad ? MISSING : user === null ? NEED_LOGIN : SPLASH;
+    return failedToLoad ? MISSING : SPLASH;
   }
 
   const { event } = panorama;
@@ -401,12 +417,30 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
   return (
     <div className="flex flex-col gap-4">
       {/* Cabecera */}
-      <header className="flex items-center justify-between select-none">
-        <h1 className="font-display text-xl font-bold tracking-tight">
-          <span className="text-ink">Panora</span>
-          <span className="text-cancha">Match</span>
-        </h1>
-        <ThemeToggle />
+      <header className="flex items-center justify-between gap-2 select-none">
+        <div className="flex items-center gap-2">
+          <h1 className="font-display text-xl font-bold tracking-tight">
+            <span className="text-ink">Panora</span>
+            <span className="text-cancha">Match</span>
+          </h1>
+          {isAuthReady && user === null && (
+            <span className="rounded-full border border-wait/40 bg-wait-soft px-2.5 py-0.5 text-[11px] font-bold text-wait">
+              Vista previa
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {isAuthReady && user === null && (
+            <button
+              type="button"
+              onClick={redirectToLogin}
+              className="rounded-xl border border-cancha bg-cancha px-3 py-1.5 text-xs font-bold text-elev transition hover:bg-cancha-deep active:scale-[0.98]"
+            >
+              Iniciar sesión
+            </button>
+          )}
+          <ThemeToggle />
+        </div>
       </header>
 
       <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-6">
@@ -427,21 +461,32 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
             <p className="mt-1 text-sm text-ink-soft">{formatPanoramaStartsAt(event.startsAt)}</p>
             {quorum !== null && quorumLabel !== null && (
               <div className="mt-4">
-                <QuorumSemaphore status={quorum} label={quorumLabel} />
+                <QuorumSemaphore
+                  status={quorum}
+                  label={quorumLabel}
+                  vanCount={classification?.titulars.length}
+                  maxCapacity={event.maxCapacity}
+                />
               </div>
             )}
           </section>
 
-          {/* Bienvenida: participa con tu cuenta; el nombre viene del perfil */}
+          {/* Bienvenida: participa con tu cuenta; sin sesión muestra vista previa y redirige al login */}
           {flow === "fresh" && ownAttendee === null ? (
             <section className="rounded-2xl border border-ink/15 bg-elev p-4">
               <h2 className="font-display text-lg font-bold tracking-tight text-ink">
                 ¿Vas o no vas?
               </h2>
-              <p className="mt-0.5 text-sm text-ink-soft">
-                Participas con tu cuenta como{" "}
-                <span className="font-bold text-ink">{user?.displayName}</span>.
-              </p>
+              {user !== null ? (
+                <p className="mt-0.5 text-sm text-ink-soft">
+                  Participas con tu cuenta como{" "}
+                  <span className="font-bold text-ink">{user.displayName}</span>.
+                </p>
+              ) : (
+                <p className="mt-0.5 text-sm text-ink-soft">
+                  Estás viendo la vista previa del panorama. Elige tu respuesta o inicia sesión para registrar tu asistencia.
+                </p>
+              )}
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {STATUS_OPTIONS.map((option) => (
                   <button
@@ -455,6 +500,15 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
                   </button>
                 ))}
               </div>
+              {isAuthReady && user === null && (
+                <button
+                  type="button"
+                  onClick={redirectToLogin}
+                  className="mt-3 w-full rounded-xl border border-cancha bg-cancha px-4 py-2.5 text-sm font-bold text-elev transition hover:bg-cancha-deep active:scale-[0.99]"
+                >
+                  Iniciar sesión para confirmar asistencia
+                </button>
+              )}
               {error !== null && (
                 <p className="mt-2 text-xs font-semibold text-baja" role="alert">
                   {error}
@@ -551,25 +605,26 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
         </div>
 
         <div className="flex flex-col gap-4">
-          {/* Control de pagos: bloque copiable + tablero; la fila propia del
-              titular con sesión lleva «Ya transferí» / retractar (RF-11) */}
-          <PaymentTreasuryPanel
-            panorama={panorama}
-            payments={payments}
-            selfActions={
-              ownAttendee === null
-                ? undefined
-                : {
-                    playerRef: ownAttendee.id,
-                    isTitular:
-                      classification?.titulars.some((attendee) => attendee.id === ownAttendee.id) ??
-                      false,
-                    isBusy: isSelfPaymentBusy,
-                    mark: () => void markSelfTransferred(),
-                    retract: () => void retractSelfTransferred(),
-                  }
-            }
-          />
+          {/* Control de pagos: solo para usuarios con sesión (anónimos no ven datos bancarios) */}
+          {user !== null && (
+            <PaymentTreasuryPanel
+              panorama={panorama}
+              payments={payments}
+              selfActions={
+                ownAttendee === null
+                  ? undefined
+                  : {
+                      playerRef: ownAttendee.id,
+                      isTitular:
+                        classification?.titulars.some((attendee) => attendee.id === ownAttendee.id) ??
+                        false,
+                      isBusy: isSelfPaymentBusy,
+                      mark: () => void markSelfTransferred(),
+                      retract: () => void retractSelfTransferred(),
+                    }
+              }
+            />
+          )}
 
           {/* Tablero (solo lectura para invitados: nadie toca la fila ajena) */}
           {classification !== null && (

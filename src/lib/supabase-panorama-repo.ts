@@ -135,7 +135,7 @@ export async function fetchCreatorPanoramas(
 ): Promise<SavedPanorama[]> {
   const { data, error } = await client
     .from("panoramas")
-    .select("*, participants(*)")
+    .select("id,creator_id,title,mode,starts_at,max_capacity,total_cost_clp,creator_name,created_at,participants(id,panorama_id,name,status,confirmed_order,auth_user_id,guest_secret,created_at)")
     .eq("creator_id", creatorId);
 
   const rows = assertData(data, error) as Array<
@@ -153,7 +153,7 @@ export async function fetchPanoramaById(
 ): Promise<SavedPanorama | null> {
   const { data, error } = await client
     .from("panoramas")
-    .select("*, participants(*)")
+    .select("id,creator_id,title,mode,starts_at,max_capacity,total_cost_clp,creator_name,created_at,participants(id,panorama_id,name,status,confirmed_order,auth_user_id,guest_secret,created_at)")
     .eq("id", panoramaId)
     .order("created_at", { foreignTable: "participants", ascending: true })
     .maybeSingle();

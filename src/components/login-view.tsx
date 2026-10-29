@@ -143,14 +143,17 @@ export default function LoginView({
     typeof pendingNext === "string" ? pendingNext : null,
   );
   const goNext = (fallback: string) => {
-    router.push(nextPath ?? fallback);
-    router.refresh();
+    window.location.assign(nextPath ?? fallback);
+
   };
 
   const handleGoogle = async () => {
     setBusyAction("google");
     setError(null);
     try {
+      if (nextPath) {
+        document.cookie = `panoramatch_next=${encodeURIComponent(nextPath)}; path=/; max-age=300; SameSite=Lax`;
+      }
       await loginWithGoogle(nextPath);
       // signInWithOAuth redirige fuera de la app; nada más por aquí.
     } catch {

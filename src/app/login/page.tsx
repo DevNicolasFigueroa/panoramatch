@@ -19,14 +19,19 @@ export default async function LoginPage({
   const rawError = paramsResolved.error;
   const initialError = typeof rawError === "string" ? rawError : undefined;
   const rawNext = paramsResolved.next;
+
+  const cookieStore = await cookies();
+  const cookieNext = cookieStore.get("panoramatch_next")?.value;
+  const decodedCookieNext =
+    cookieNext !== undefined ? decodeURIComponent(cookieNext) : undefined;
+
   // El `next` solo viaja si es una ruta interna con nuestra forma; lo demás
   // se descarta (nada de open-redirect).
-  const pendingNext = resolveInternalRedirectPath(
-    typeof rawNext === "string" ? rawNext : undefined,
-  );
+  const pendingNext =
+    resolveInternalRedirectPath(typeof rawNext === "string" ? rawNext : undefined) ??
+    resolveInternalRedirectPath(decodedCookieNext);
 
   const { url, anonKey } = getSupabaseEnv();
-  const cookieStore = await cookies();
   const supabase = createServerClient(url, anonKey, {
     cookies: {
       getAll() {

@@ -255,7 +255,7 @@ export default function GuestPlaceVote({ panorama, ownParticipantId, ownStatus }
           </button>
         </form>
       )}
-      {ownStatus !== null && ownStatus !== "going" && isOpen && (
+      {ownStatus !== "going" && isOpen && (
         <p className="mt-2 text-xs text-ink-soft">
           Solo quienes van («Voy») pueden votar lugares en este panorama.
         </p>

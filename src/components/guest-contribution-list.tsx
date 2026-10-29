@@ -343,7 +343,7 @@ export default function GuestContributionList({
           </button>
         </form>
       )}
-      {ownStatus !== null && ownStatus !== "going" && (
+      {ownStatus !== "going" && (
         <p className="mt-2 text-xs text-ink-soft">
           Solo los confirmados «Voy» dentro del cupo pueden llevar ítems.
         </p>
