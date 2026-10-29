@@ -65,8 +65,7 @@ export interface PaymentTransaction {
 }
 
 /** Marca propia «Ya transferí» (estado «En revisión»). Máx. una por persona. */
-export interface PaymentClaim {
-  playerRef: PlayerRef;
+export interface PaymentClaim {  playerRef: PlayerRef;
   /** Sello local de la marca. */
   claimedAt: string;
 }
@@ -81,6 +80,9 @@ export interface ResolvedRefund {
   resolvedAt: string;
 }
 
+/** Nota de motivo de un rechazo de comprobante, por persona (spec 005, D3). */
+export type PaymentsRejectionNotes = Record<PlayerRef, string>;
+
 /** Estado completo de tesorería de un panorama. */
 export interface PaymentsState {
   /** Bloque de datos de transferencia; null = no definido (módulo oculto). */
@@ -91,6 +93,12 @@ export interface PaymentsState {
   claims: PaymentClaim[];
   /** Cierres «Reembolsada» registrados. */
   resolvedRefunds: ResolvedRefund[];
+  /**
+   * Notas de rechazo vigentes (spec 005): visibles al dueño de la fila en
+   * su tarjeta hasta su próxima marca. Opcional: los estados de la era 004
+   * vienen sin la llave y se tratan como vacías.
+   */
+  rejectionNotes?: PaymentsRejectionNotes;
 }
 
 export type PaymentTreasuryError =
