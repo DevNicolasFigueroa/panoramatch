@@ -1,16 +1,16 @@
 "use client";
 
 /**
- * Sección «Control de pagos» (spec 004, compartida por los 3 modos):
+ * Sección «Control de pagos» (specs 004 + 005, SOLO del organizador):
  * bloque de datos de transferencia copiable + tablero por titular en orden
- * de confirmación + devoluciones pendientes (derivadas) y cierres
- * «Reembolsada» + totales de tesorería del creador.
+ * de confirmación + comprobantes (miniatura, visor Confirmar/Rechazar,
+ * nota de rechazo editable D3) + devoluciones pendientes/registradas y
+ * totales de tesorería. El invitado del enlace usa su propia vista en 3
+ * capas (privacy 2A): este panel jamás se muestra allá.
  *
- * Toda la regla de negocio vive en `src/core/payment-treasury.ts`; aquí solo
- * presentación: cada fila pinta color = estado (adeudo o devolución pendiente
- * usan el fondo fuerte; el resto queda en tinta). El CREADOR recibe
- * `actions` (RF-5, RF-9, RF-10); el INVITADO del enlace recibe `selfActions`
- * (RF-11): solo la fila propia puede marcar «Ya transferí» o retractar.
+ * Toda la regla de negocio vive en `src/core/payment-treasury.ts` y
+ * `src/core/payment-receipt.ts`; aquí solo presentación. El comprobante es
+ * evidencia: jamás altera montos.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -24,10 +24,17 @@ import {
   type PlayerRef,
   type RefundKind,
 } from "@/core/payment-treasury";
+import {
+  MAX_REJECTION_NOTE_LENGTH,
+  type PaymentReceipt,
+  type ReceiptsState,
+} from "@/core/payment-receipt";
 import { withCreatorAttendee } from "@/core/creator-attendee";
 import { buildRestPlayers, buildTitularPlayers } from "@/core/team-organizer";
 import { initialsFromName } from "@/core/initials";
 import type { SavedPanorama } from "@/core/types";
+import { fetchSignedReceiptUrlRow } from "@/lib/supabase-panorama-repo";
+import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 
 const EMPTY_PAYMENTS: PaymentsState = {
   transferInfo: null,
@@ -72,37 +79,39 @@ interface CreatorActions {
   revokePayment: (playerRef: PlayerRef, transactionId?: string) => boolean;
   resolveRefund: (playerRef: PlayerRef, kind: RefundKind) => boolean;
   reopenRefund: (playerRef: PlayerRef, kind: RefundKind) => boolean;
-}
-
-interface SelfActions {
-  /** El titular con sesión que puede accionar SU fila. */
-  playerRef: PlayerRef;
-  /** true si la fila propia es titular vigente (podría marcar). */
-  isTitular: boolean;
-  isBusy: boolean;
-  mark: () => void;
-  retract: () => void;
+  /** Rechaza el comprobante «En revisión»: «Pendiente» + nota opcional (RF-5). */
+  rejectPaymentTransfer: (playerRef: PlayerRef, note: string | null) => boolean;
+  /** Edita la nota mientras la fila siga «Pendiente»; texto vacío la borra (D3). */
+  updateRejectionNote: (playerRef: PlayerRef, note: string | null) => boolean;
 }
 
 export default function PaymentTreasuryPanel({
   panorama,
   payments,
+  receipts,
   actions,
-  selfActions,
   boletaSlot,
 }: {
   panorama: SavedPanorama;
   /** Estado de tesorería cargado; null mientras carga («Cargando los pagos…»). */
   payments: PaymentsState | null;
-  /** Solo el creador las recibe; el invitado ve el tablero en solo lectura. */
-  actions?: CreatorActions;
-  /** Solo el enlace la recibe: la fila propia del titular con sesión. */
-  selfActions?: SelfActions;
+  /** Comprobantes vigentes (miniaturas/visores); null mientras carga. */
+  receipts: ReceiptsState | null;
+  /** Solo el creador las recibe. */
+  actions: CreatorActions;
   /** En la página de Tesorería: «La boleta» se integra en la columna derecha junto a reembolsos y recaudación. */
   boletaSlot?: React.ReactNode;
 }) {
   const state = payments ?? EMPTY_PAYMENTS;
   const isLoading = payments === null;
+
+  const receiptByRef = useMemo(() => {
+    const map = new Map<string, PaymentReceipt>();
+    for (const receipt of receipts?.receipts ?? []) {
+      map.set(receipt.playerRef, receipt);
+    }
+    return map;
+  }, [receipts]);
 
   const allAttendees = useMemo(
     () => withCreatorAttendee(panorama.attendees, panorama.event.creatorName),
@@ -132,6 +141,12 @@ export default function PaymentTreasuryPanel({
 
   const [isCopied, setIsCopied] = useState<"idle" | "ok" | "failed">("idle");
   const [confirmDrafts, setConfirmDrafts] = useState<Record<string, string>>({});
+  /** Comprobante abierto en el visor (playerRef); cerrado con null. */
+  const [viewerRef, setViewerRef] = useState<PlayerRef | null>(null);
+  /** Borradores de nota de rechazo por fila (rechazo y edición D3). */
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  /** Editores de nota abiertos por fila (mientras la fila siga «Pendiente»). */
+  const [openNoteEditors, setOpenNoteEditors] = useState<Record<string, boolean>>({});
 
   const copyTransferInfo = async () => {
     const text = state.transferInfo ?? "";
@@ -147,48 +162,42 @@ export default function PaymentTreasuryPanel({
   };
 
   const saveDraft = () => {
-    if (actions === undefined) {
-      return;
-    }
     // El mensaje exacto (demasiado largo) lo emite el store con el núcleo.
-    if (actions.profferPaymentInfo(infoDraft)) {
-      // El borrador se re-sincroniza con el efecto de `transferInfo`.
-    }
+    actions.profferPaymentInfo(infoDraft);
   };
 
   /** Editor del bloque (solo creador): comparten el módulo vivo y la captura apagada. */
-  const editorBox =
-    actions === undefined ? null : (
-      <div className="mt-2 flex flex-col gap-2">
-        <textarea
-          value={infoDraft}
-          onChange={(inputEvent) => setInfoDraft(inputEvent.target.value)}
-          rows={3}
-          maxLength={MAX_TRANSFER_INFO_LENGTH + 50}
-          placeholder="Banco, tipo de cuenta, número y correo…"
-          className="w-full whitespace-pre-line rounded-lg border border-ink/20 bg-elev px-2 py-1.5 text-sm leading-snug text-ink outline-none focus:border-ink/50"
-        />
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setInfoDraft("");
-              actions.profferPaymentInfo("");
-            }}
-            className="rounded-lg border border-baja/40 px-2.5 py-1 text-xs font-bold text-baja transition hover:bg-baja-soft active:scale-[0.97]"
-          >
-            Borrar
-          </button>
-          <button
-            type="button"
-            onClick={saveDraft}
-            className="rounded-lg border border-cancha/50 bg-cancha-soft px-2.5 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
-          >
-            Guardar bloque
-          </button>
-        </div>
+  const editorBox = (
+    <div className="mt-2 flex flex-col gap-2">
+      <textarea
+        value={infoDraft}
+        onChange={(inputEvent) => setInfoDraft(inputEvent.target.value)}
+        rows={3}
+        maxLength={MAX_TRANSFER_INFO_LENGTH + 50}
+        placeholder="Banco, tipo de cuenta, número y correo…"
+        className="w-full whitespace-pre-line rounded-lg border border-ink/20 bg-elev px-2 py-1.5 text-sm leading-snug text-ink outline-none focus:border-ink/50"
+      />
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setInfoDraft("");
+            actions.profferPaymentInfo("");
+          }}
+          className="rounded-lg border border-baja/40 px-2.5 py-1 text-xs font-bold text-baja transition hover:bg-baja-soft active:scale-[0.97]"
+        >
+          Borrar
+        </button>
+        <button
+          type="button"
+          onClick={saveDraft}
+          className="rounded-lg border border-cancha/50 bg-cancha-soft px-2.5 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
+        >
+          Guardar bloque
+        </button>
       </div>
-    );
+    </div>
+  );
 
   if (isLoading) {
     const loadingSection = (
@@ -212,7 +221,6 @@ export default function PaymentTreasuryPanel({
     return boletaSlot !== undefined ? <>{boletaSlot}</> : null;
   }
 
-
   /** Parse del monto editable: solo dígitos; vacío = la cuota vigente. */
   const parseDraftAmount = (playerRef: PlayerRef): number | undefined => {
     const raw = (confirmDrafts[playerRef] ?? "").replace(/[^\d]/g, "");
@@ -222,8 +230,11 @@ export default function PaymentTreasuryPanel({
     return Number.parseInt(raw, 10);
   };
 
-  const hasRefundsOrTotals =
-    view.pendingRefunds.length > 0 || view.resolvedRefunds.length > 0 || actions !== undefined;
+  const viewerReceipt = viewerRef === null ? null : receiptByRef.get(viewerRef) ?? null;
+  const viewerTitular = viewerRef === null ? null : view.titulars.find((row) => row.playerRef === viewerRef) ?? null;
+
+  // Vista de Tesorería: el bloque de devoluciones/totales siempre acompaña al control.
+  const hasRefundsOrTotals = true;
 
   const refundsAndTotalsContent = (
     <>
@@ -246,15 +257,13 @@ export default function PaymentTreasuryPanel({
                   <span className="text-sm font-bold text-baja tabular-nums">
                     {formatCLP(refund.amountCLP)}
                   </span>
-                  {actions !== undefined && (
-                    <button
-                      type="button"
-                      onClick={() => actions.resolveRefund(refund.playerRef, refund.kind)}
-                      className="rounded-lg border border-cancha/50 bg-cancha-soft px-2 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
-                    >
-                      Reembolsada
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => actions.resolveRefund(refund.playerRef, refund.kind)}
+                    className="rounded-lg border border-cancha/50 bg-cancha-soft px-2 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
+                  >
+                    Reembolsada
+                  </button>
                 </div>
               </li>
             ))}
@@ -284,15 +293,13 @@ export default function PaymentTreasuryPanel({
                   <span className="text-sm font-bold text-cancha tabular-nums">
                     {formatCLP(refund.amountCLP)}
                   </span>
-                  {actions !== undefined && (
-                    <button
-                      type="button"
-                      onClick={() => actions.reopenRefund(refund.playerRef, refund.kind)}
-                      className="rounded-lg border border-ink/15 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-ink/50 hover:text-ink active:scale-[0.97]"
-                    >
-                      Reabrir
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => actions.reopenRefund(refund.playerRef, refund.kind)}
+                    className="rounded-lg border border-ink/15 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-ink/50 hover:text-ink active:scale-[0.97]"
+                  >
+                    Reabrir
+                  </button>
                 </div>
               </li>
             ))}
@@ -300,8 +307,8 @@ export default function PaymentTreasuryPanel({
         </div>
       )}
 
-      {/* Totales de tesorería (RF-10): solo el creador, con la barra de recaudación */}
-      {actions !== undefined && (() => {
+      {/* Totales de tesorería (RF-10): con la barra de recaudación */}
+      {(() => {
         const expectedCLP = view.totals.collectedCLP + view.totals.toCollectCLP;
         const collectedPercent =
           expectedCLP > 0 ? Math.round((view.totals.collectedCLP / expectedCLP) * 100) : null;
@@ -360,16 +367,9 @@ export default function PaymentTreasuryPanel({
           </button>
         </div>
 
-        {actions === undefined ? (
-          <p className="mt-2 whitespace-pre-line text-sm leading-snug text-ink">
-            {state.transferInfo ?? ""}
-          </p>
-        ) : (
-          editorBox
-        )}
+        {editorBox}
       </div>
-
-      {/* Tablero por titular, en orden de confirmación (RF-4) */}
+      {/* Tablero por titular, en orden de confirmación (RF-4): SOLO del creador */}
       <div className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between">
           <h3 className="text-sm font-bold text-ink">Confirmados</h3>
@@ -377,11 +377,11 @@ export default function PaymentTreasuryPanel({
         </div>
         <ul className="flex flex-col gap-2">
           {view.titulars.map((titular) => {
-            const isOwn = selfActions !== undefined && selfActions.playerRef === titular.playerRef;
-            const hasVigentePayment = titular.paidTotalCLP > 0;
+            const receipt = receiptByRef.get(titular.playerRef) ?? null;
+            const rejectionNote = state.rejectionNotes?.[titular.playerRef] ?? null;
+            const isNoteEditorOpen = openNoteEditors[titular.playerRef] === true;
 
-            /* Fila del organizador: ES quien recibe las transferencias,
-               así que no se le muestra adeudo, devolución ni acciones. */
+            /* Fila del organizador: ES quien recibe las transferencias, */
             if (titular.isOrganizer) {
               return (
                 <li
@@ -412,8 +412,8 @@ export default function PaymentTreasuryPanel({
                 className={`rounded-xl border bg-paper p-3 ${
                   titular.situation === "owing"
                     ? "border-baja"
-                    : isOwn
-                      ? "border-cancha/60"
+                    : receipt !== null
+                      ? "border-camino/40"
                       : "border-ink/15"
                 }`}
               >
@@ -437,9 +437,9 @@ export default function PaymentTreasuryPanel({
                   </span>
                 </div>
 
-                <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <span
-                    className={`rounded-full border px-1.5 py-px text-[10px] font-semibold ${SITUATION_CHIP[titular.situation]}`}
+                    className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-semibold ${SITUATION_CHIP[titular.situation]}`}
                   >
                     {SITUATION_LABEL[titular.situation]}
                   </span>
@@ -453,67 +453,139 @@ export default function PaymentTreasuryPanel({
                       devolver {formatCLP(titular.creditCLP)}
                     </span>
                   )}
+                  {/* Índices del comprobante (spec 005) */}
+                  {receipt !== null && receipt.confirmedAt !== null && (
+                    <span className="shrink-0 rounded-full border border-cancha/50 bg-cancha-soft px-1.5 py-px text-[10px] font-semibold text-cancha">
+                      ✓ respaldo
+                    </span>
+                  )}
+                  {titular.flowState === "paid" && receipt === null && (
+                    <span className="shrink-0 rounded-full border border-ink/20 bg-paper px-1.5 py-px text-[10px] font-semibold text-ink-soft">
+                      sin respaldo
+                    </span>
+                  )}
+                  {titular.flowState === "in_review" && receipt === null && (
+                    <span className="shrink-0 rounded-full border border-camino/40 bg-paper px-1.5 py-px text-[10px] font-semibold text-camino">
+                      marca heredada sin imagen
+                    </span>
+                  )}
                 </div>
 
-                {/* Acciones del creador en la fila (RF-5) */}
-                {actions !== undefined && (
-                  <div className="mt-2.5 flex flex-wrap items-center justify-end gap-1.5">
-                    <input
-                      inputMode="numeric"
-                      value={confirmDrafts[titular.playerRef] ?? ""}
-                      onChange={(inputEvent) =>
-                        setConfirmDrafts((current) => ({
-                          ...current,
-                          [titular.playerRef]: inputEvent.target.value,
-                        }))
-                      }
-                      placeholder={formatCLP(titular.currentQuotaCLP).slice(1)}
-                      aria-label={`Monto transferido de ${titular.name}`}
-                      className="w-24 rounded-lg border border-ink/20 bg-elev px-2 py-1 text-right text-xs font-bold tabular-nums text-ink outline-none focus:border-ink/50 sm:w-28"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => actions.confirmPayment(titular.playerRef, parseDraftAmount(titular.playerRef))}
-                      className="rounded-lg border border-cancha/50 bg-cancha-soft px-2 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
-                    >
-                      Pagado
-                    </button>
-                    {hasVigentePayment && (
-                      <button
-                        type="button"
-                        onClick={() => actions.revokePayment(titular.playerRef)}
-                        className="rounded-lg border border-ink/15 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-baja hover:text-baja active:scale-[0.97]"
-                      >
-                        Revertir
-                      </button>
-                    )}
+                {/* Miniatura del comprobante vigente (a la izquierda del flujo) */}
+                {receipt !== null && (
+                  <div className="mt-2">
+                    <CreatorReceiptThumb receipt={receipt} onOpen={() => setViewerRef(titular.playerRef)} />
                   </div>
                 )}
 
-                {/* Acción propia del titular con sesión en el enlace (RF-11) */}
-                {selfActions !== undefined && isOwn && selfActions.isTitular && (
-                  <div className="mt-2 flex justify-end">
-                    {state.claims.some((claim) => claim.playerRef === selfActions.playerRef) ? (
-                      <button
-                        type="button"
-                        disabled={selfActions.isBusy}
-                        onClick={selfActions.retract}
-                        className="rounded-lg border border-camino/50 bg-camino-soft px-2.5 py-1 text-xs font-bold text-camino transition active:scale-[0.97] disabled:opacity-60"
-                      >
-                        Retractar mi marca
-                      </button>
+                {/* Nota de rechazo visible (RF-5) y editable mientras siga «Pendiente» (D3) */}
+                {titular.flowState === "pending" && rejectionNote !== null && (
+                  <div className="mt-2 rounded-lg border border-baja/40 bg-baja-soft px-2.5 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-baja">
+                      Motivo enviado a {titular.name}
+                    </p>
+                    <p className="mt-0.5 whitespace-pre-line text-xs leading-snug text-ink">
+                      {rejectionNote}
+                    </p>
+                    {isNoteEditorOpen ? (
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        <textarea
+                          value={noteDrafts[titular.playerRef] ?? rejectionNote}
+                          maxLength={MAX_REJECTION_NOTE_LENGTH}
+                          onChange={(inputEvent) =>
+                            setNoteDrafts((current) => ({
+                              ...current,
+                              [titular.playerRef]: inputEvent.target.value,
+                            }))
+                          }
+                          rows={2}
+                          placeholder="Motivo para el invitado (opcional, máx. 500)…"
+                          className="w-full rounded-lg border border-ink/20 bg-elev px-2 py-1.5 text-xs leading-snug text-ink outline-none focus:border-ink/50"
+                        />
+                        <div className="flex justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setOpenNoteEditors((current) => ({ ...current, [titular.playerRef]: false }))}
+                            className="rounded-lg border border-ink/15 px-2 py-1 text-[11px] font-bold text-ink-soft transition hover:border-ink/50"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              actions.updateRejectionNote(
+                                titular.playerRef,
+                                (noteDrafts[titular.playerRef] ?? rejectionNote).trim(),
+                              );
+                              setOpenNoteEditors((current) => ({ ...current, [titular.playerRef]: false }));
+                            }}
+                            className="rounded-lg border border-cancha/50 bg-cancha-soft px-2 py-1 text-[11px] font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
+                          >
+                            Guardar nota
+                          </button>
+                        </div>
+                      </div>
                     ) : (
                       <button
                         type="button"
-                        disabled={selfActions.isBusy}
-                        onClick={selfActions.mark}
-                        className="rounded-lg border border-cancha/50 bg-cancha-soft px-2.5 py-1 text-xs font-bold text-cancha transition active:scale-[0.97] disabled:opacity-60"
+                        onClick={() => {
+                          setNoteDrafts((current) => ({
+                            ...current,
+                            [titular.playerRef]: rejectionNote,
+                          }));
+                          setOpenNoteEditors((current) => ({ ...current, [titular.playerRef]: true }));
+                        }}
+                        className="mt-1 text-[11px] font-bold text-cancha underline decoration-dotted underline-offset-2"
                       >
-                        Ya transferí
+                        Editar nota
                       </button>
                     )}
                   </div>
                 )}
+
+                {/* Acciones del creador en la fila (RF-5) */}
+                <div className="mt-2.5 flex flex-wrap items-center justify-end gap-1.5">
+                  <input
+                    inputMode="numeric"
+                    value={confirmDrafts[titular.playerRef] ?? ""}
+                    onChange={(inputEvent) =>
+                      setConfirmDrafts((current) => ({
+                        ...current,
+                        [titular.playerRef]: inputEvent.target.value,
+                      }))
+                    }
+                    placeholder={formatCLP(titular.currentQuotaCLP).slice(1)}
+                    aria-label={`Monto transferido de ${titular.name}`}
+                    className="w-24 rounded-lg border border-ink/20 bg-elev px-2 py-1 text-right text-xs font-bold tabular-nums text-ink outline-none focus:border-ink/50 sm:w-28"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => actions.confirmPayment(titular.playerRef, parseDraftAmount(titular.playerRef))}
+                    className="rounded-lg border border-cancha/50 bg-cancha-soft px-2 py-1 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
+                  >
+                    Pagado
+                  </button>
+                  {titular.paidTotalCLP > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => actions.revokePayment(titular.playerRef)}
+                      className="rounded-lg border border-ink/15 px-2 py-1 text-xs font-bold text-ink-soft transition hover:border-baja hover:text-baja active:scale-[0.97]"
+                    >
+                      Revertir
+                    </button>
+                  )}
+                  {titular.flowState === "in_review" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setViewerRef(titular.playerRef);
+                      }}
+                      className="rounded-lg border border-camino/50 bg-camino-soft px-2 py-1 text-xs font-bold text-camino transition hover:border-camino active:scale-[0.97]"
+                    >
+                      {receipt === null ? "Ver marca" : "Revisar"}
+                    </button>
+                  )}
+                </div>
               </li>
             );
           })}
@@ -529,27 +601,236 @@ export default function PaymentTreasuryPanel({
     </section>
   );
 
-  if (boletaSlot === undefined) {
-    return controlSection;
-  }
+  const mainContent = boletaSlot === undefined
+    ? controlSection
+    : (
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:grid-rows-[auto_1fr] lg:items-start lg:gap-6">
+        {/* La boleta: arriba en móvil, columna derecha superior en escritorio */}
+        <div className="lg:col-start-2 lg:row-start-1">{boletaSlot}</div>
+
+        {/* Control de pagos: en medio en móvil, columna izquierda en escritorio */}
+        <div className="min-w-0 lg:col-start-1 lg:row-span-2 lg:row-start-1">
+          {controlSection}
+        </div>
+
+        {/* Reembolsos y Recaudación en vivo: abajo en móvil, columna derecha (al lado del control de pagos) en escritorio */}
+        {hasRefundsOrTotals && (
+          <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4 sm:p-5 lg:col-start-2 lg:row-start-2">
+            {refundsAndTotalsContent}
+          </section>
+        )}
+      </div>
+    );
 
   return (
-    <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:grid-rows-[auto_1fr] lg:items-start lg:gap-6">
-      {/* La boleta: arriba en móvil, columna derecha superior en escritorio */}
-      <div className="lg:col-start-2 lg:row-start-1">{boletaSlot}</div>
+    <>
+      {mainContent}
 
-      {/* Control de pagos: en medio en móvil, columna izquierda en escritorio */}
-      <div className="min-w-0 lg:col-start-1 lg:row-span-2 lg:row-start-1">
-        {controlSection}
-      </div>
-
-      {/* Reembolsos y Recaudación en vivo: abajo en móvil, columna derecha (al lado del control de pagos) en escritorio */}
-      {hasRefundsOrTotals && (
-        <section className="flex flex-col gap-4 rounded-2xl border border-ink/15 bg-elev p-4 sm:p-5 lg:col-start-2 lg:row-start-2">
-          {refundsAndTotalsContent}
-        </section>
+      {/* Visor ampliado del comprobante: Confirmar / Rechazar (RF-4/RF-5) */}
+      {viewerRef !== null && viewerTitular !== null && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center sm:justify-center sm:p-4">
+          <button
+            type="button"
+            aria-hidden="true"
+            className="absolute inset-0 bg-ink/70 backdrop-blur-sm"
+            onClick={() => setViewerRef(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Comprobante de ${viewerTitular.name}`}
+            className="relative mx-auto flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-ink bg-elev sm:rounded-2xl"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-ink/10 px-4 py-3">
+              <p className="min-w-0 truncate text-sm font-bold text-ink">
+                Comprobante de {viewerTitular.name}
+              </p>
+              <button
+                type="button"
+                onClick={() => setViewerRef(null)}
+                className="shrink-0 rounded-lg border border-ink/20 px-2.5 py-1.5 text-xs font-semibold text-ink transition hover:border-ink/60"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto bg-paper">
+              <FullReceiptImage receipt={viewerReceipt} />
+            </div>
+            {viewerTitular.flowState === "in_review" && (
+              <div className="flex flex-col gap-2 border-t border-ink/10 px-4 py-3">
+                <textarea
+                  value={noteDrafts[viewerTitular.playerRef] ?? ""}
+                  maxLength={MAX_REJECTION_NOTE_LENGTH}
+                  onChange={(inputEvent) =>
+                    setNoteDrafts((current) => ({
+                      ...current,
+                      [viewerTitular.playerRef]: inputEvent.target.value,
+                    }))
+                  }
+                  rows={2}
+                  placeholder={`Motivo del rechazo para ${viewerTitular.name} (opcional, máx. 500)…`}
+                  className="w-full rounded-lg border border-ink/20 bg-elev px-2 py-1.5 text-xs leading-snug text-ink outline-none focus:border-ink/50"
+                />
+                <div className="flex justify-end gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      actions.rejectPaymentTransfer(
+                        viewerTitular.playerRef,
+                        (noteDrafts[viewerTitular.playerRef] ?? "").trim() === ""
+                          ? null
+                          : (noteDrafts[viewerTitular.playerRef] ?? "").trim(),
+                      );
+                      setViewerRef(null);
+                    }}
+                    className="rounded-lg border border-baja/50 px-2.5 py-1.5 text-xs font-bold text-baja transition hover:bg-baja-soft active:scale-[0.97]"
+                  >
+                    Rechazar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      actions.confirmPayment(
+                        viewerTitular.playerRef,
+                        parseDraftAmount(viewerTitular.playerRef),
+                      );
+                      setViewerRef(null);
+                    }}
+                    className="rounded-lg border border-cancha/50 bg-cancha-soft px-2.5 py-1.5 text-xs font-bold text-cancha transition hover:border-cancha active:scale-[0.97]"
+                  >
+                    Pagado · {formatCLP(parseDraftAmount(viewerTitular.playerRef) ?? viewerTitular.currentQuotaCLP)}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
-    </div>
+    </>
+  );
+}
+
+/* ─────────────── Imagen de comprobante (miniatura y visor) ─────────────── */
+
+/**
+ * URL firmada de corta vida (5 min) por objeto: se pide al montar con
+ * reintento manual si la vista no está disponible (p. ej. URL expirada).
+ */
+function useReceiptSignedUrl(storagePath: string | null): {
+  url: string | null;
+  isFailed: boolean;
+  retry: () => void;
+} {
+  const [url, setUrl] = useState<string | null>(null);
+  const [isFailed, setIsFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsFailed(false);
+    setUrl(null);
+    if (storagePath === null) {
+      return;
+    }
+    const run = async () => {
+      try {
+        const signed = await fetchSignedReceiptUrlRow(getSupabaseBrowserClient(), storagePath);
+        if (!cancelled) {
+          setUrl(signed);
+          if (signed === null) {
+            setIsFailed(true);
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setIsFailed(true);
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [storagePath, retryKey]);
+
+  return {
+    url,
+    isFailed,
+    retry: () => setRetryKey((key) => key + 1),
+  };
+}
+
+/** Miniatura cuadrada del comprobante en la fila del titular. */
+function CreatorReceiptThumb({
+  receipt,
+  onOpen,
+}: {
+  receipt: PaymentReceipt;
+  onOpen: () => void;
+}) {
+  const { url, isFailed } = useReceiptSignedUrl(receipt.storagePath);
+  const isLocked = receipt.confirmedAt !== null;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group relative block h-16 w-16 overflow-hidden rounded-xl border border-ink/20 bg-paper active:scale-[0.98]"
+      aria-label="Ver el comprobante"
+    >
+      {url !== null ? (
+        <img src={url} alt="Comprobante" className="h-full w-full object-cover" />
+      ) : (
+        <span aria-hidden="true" className="grid h-full w-full place-items-center text-lg text-ink-soft">
+          {isFailed ? "⚠" : "🧾"}
+        </span>
+      )}
+      {isLocked && (
+        <span className="absolute inset-x-0 bottom-0 bg-cancha/90 py-px text-center text-[9px] font-bold text-elev">
+          respaldo
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** Contenido del visor: imagen completa del comprobante. */
+function FullReceiptImage({ receipt }: { receipt: PaymentReceipt | null }) {
+  const { url, isFailed, retry } = useReceiptSignedUrl(receipt?.storagePath ?? null);
+
+  if (receipt === null) {
+    return (
+      <p className="grid place-items-center gap-2 p-8 text-sm text-ink-soft">
+        Marca «Ya transferí» sin comprobante (era sin imagen): puedes confirmarla a mano o rechazarla.
+      </p>
+    );
+  }
+  if (url === null) {
+    return (
+      <p className="grid place-items-center gap-2 p-8 text-sm text-ink-soft">
+        {isFailed ? (
+          <>
+            La vista no está disponible ahora.
+            <button
+              type="button"
+              onClick={retry}
+              className="text-xs font-bold text-cancha underline decoration-dotted underline-offset-2"
+            >
+              Reintentar
+            </button>
+          </>
+        ) : (
+          "Abriendo la imagen…"
+        )}
+      </p>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt="Comprobante completo"
+      className="mx-auto max-h-[56dvh] w-auto max-w-full p-3"
+    />
   );
 }
 

@@ -37,6 +37,7 @@ export default function PanoramaApp() {
     checklist,
     teams,
     payments,
+    receipts,
     actions,
     dismissError,
   } = usePanoramaStore(user?.userId ?? null, user?.displayName ?? null);
@@ -182,6 +183,7 @@ export default function PanoramaApp() {
         <TreasuryView
           activePanorama={activePanorama}
           payments={payments}
+          receipts={receipts}
           savedPanoramas={savedPanoramas}
           actions={actions}
           onOpenPanorama={openPanoramaInTreasury}

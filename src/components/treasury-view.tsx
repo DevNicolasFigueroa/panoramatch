@@ -9,6 +9,7 @@
 
 import type { SavedPanorama } from "@/core/types";
 import type { PaymentsState } from "@/core/payment-treasury";
+import type { ReceiptsState } from "@/core/payment-receipt";
 import type { PanoramaStoreActions } from "@/lib/use-panorama-store";
 import { sortSavedPanoramas } from "@/core/panorama-collection";
 import { formatCLP, splitCost } from "@/core/currency-clp";
@@ -21,6 +22,7 @@ import FinancialPanel from "@/components/financial-panel";
 export default function TreasuryView({
   activePanorama,
   payments,
+  receipts,
   savedPanoramas,
   actions,
   onOpenPanorama,
@@ -30,6 +32,8 @@ export default function TreasuryView({
   activePanorama: SavedPanorama | null;
   /** Datos de pagos del activo; null mientras cargan. */
   payments: PaymentsState | null;
+  /** Comprobantes vigentes del activo (miniaturas y visores). */
+  receipts: ReceiptsState | null;
   savedPanoramas: readonly SavedPanorama[];
   actions: PanoramaStoreActions;
   onOpenPanorama: (panoramaId: string) => void;
@@ -121,6 +125,7 @@ export default function TreasuryView({
         <PaymentTreasuryPanel
           panorama={activePanorama}
           payments={payments}
+          receipts={receipts}
           actions={actions}
           boletaSlot={
             <FinancialPanel

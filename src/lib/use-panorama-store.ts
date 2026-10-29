@@ -83,6 +83,15 @@ import {
   type PlayerRef,
   type RefundKind,
 } from "@/core/payment-treasury";
+import {
+  markReceiptConfirmed,
+  rejectActiveClaim as rejectCoreActiveClaim,
+  setRejectionNote as setCoreRejectionNote,
+  createEmptyReceiptsState,
+  getReceiptErrorMessage,
+  isValidRejectionNote as isValidCoreRejectionNote,
+  type ReceiptsState,
+} from "@/core/payment-receipt";
 import { getTodayLocalValue } from "@/core/datetime-cl";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import {
@@ -94,11 +103,13 @@ import {
   fetchChecklistItems,
   ensureOwnProfileRow,
   fetchCreatorPanoramas,
-  fetchPaymentsState,
+  fetchCreatorTreasuryState,
   fetchPlaceData,
   fetchTeamsData,
   insertRefundRow,
   recordPaymentRow,
+  rejectPaymentTransferRow,
+  updateRejectionNoteRow,
   releaseTeamSeatRow,
   claimTeamVacancyRow,
   removeTeamMemberRow,
@@ -166,6 +177,10 @@ export interface PanoramaStoreActions {
   resolveRefund: (playerRef: PlayerRef, kind: RefundKind) => boolean;
   /** Reabre un cierre «Reembolsada»: borra el registro y la devolución vuelve a derivarse. */
   reopenRefund: (playerRef: PlayerRef, kind: RefundKind) => boolean;
+  /** Rechaza el comprobante «En revisión»: vuelve a «Pendiente» + nota opcional (RF-5). */
+  rejectPaymentTransfer: (playerRef: PlayerRef, note: string | null) => boolean;
+  /** Edita (o borra con texto vacío) la nota de rechazo mientras la fila siga «Pendiente» (D3). */
+  updateRejectionNote: (playerRef: PlayerRef, note: string | null) => boolean;
 }
 
 /** Estado vivo del tablero de lugares del panorama activo (modo Social). */
@@ -187,6 +202,9 @@ const EMPTY_TEAMS: TeamsState = createEmptyTeamsState();
 
 /** Estado de tesorería vacío (bloque null, sin transacciones ni cierres). */
 const EMPTY_PAYMENTS: PaymentsState = createEmptyPaymentsState();
+
+/** Estado de comprobantes vacío (sin adjuntos vigentes). */
+const EMPTY_RECEIPTS: ReceiptsState = createEmptyReceiptsState();
 
 /** Titulares reales del panorama activo (con el organizador virtual n.º 0). */
 function titularPlayersOf(active: SavedPanorama): TeamPlayer[] {
@@ -219,6 +237,8 @@ export interface PanoramaStore {
   teams: TeamsState | null;
   /** Estado de tesorería del panorama activo (los 3 modos); null mientras carga. */
   payments: PaymentsState | null;
+  /** Comprobantes vigentes del panorama activo (los ve el creador); null mientras carga. */
+  receipts: ReceiptsState | null;
   actions: PanoramaStoreActions;
   /** Limpia el mensaje de error visible. */
   dismissError: () => void;
@@ -290,6 +310,7 @@ export function usePanoramaStore(
   const [checklist, setChecklist] = useState<ContributionItem[] | null>(null);
   const [teams, setTeams] = useState<TeamsState | null>(null);
   const [payments, setPayments] = useState<PaymentsState | null>(null);
+  const [receipts, setReceipts] = useState<ReceiptsState | null>(null);
 
   // Carga inicial: solo los panoramas del creador con sesión.
   useEffect(() => {
@@ -431,23 +452,31 @@ export function usePanoramaStore(
 
   // Carga de tesorería del panorama activo (los 3 modos: se muestra oculta si
   // la puerta no pasa; el panel decide con `isPaymentModuleActive`).
+  // Junto a los pagos cargan los COMPROBANTES con su RPC del creador (005).
   const activeIdForPayments = getActivePanorama(state)?.id ?? null;
   useEffect(() => {
     if (activeIdForPayments === null) {
       setPayments(null);
+      setReceipts(null);
       return;
     }
     let cancelled = false;
     setPayments(null);
+    setReceipts(null);
     const run = async () => {
       try {
-        const loaded = await fetchPaymentsState(getSupabaseBrowserClient(), activeIdForPayments);
+        const loaded = await fetchCreatorTreasuryState(
+          getSupabaseBrowserClient(),
+          activeIdForPayments,
+        );
         if (!cancelled) {
-          setPayments(loaded === null ? EMPTY_PAYMENTS : loaded);
+          setPayments(loaded === null ? EMPTY_PAYMENTS : loaded.payments);
+          setReceipts(loaded === null ? EMPTY_RECEIPTS : loaded.receipts);
         }
       } catch {
         if (!cancelled) {
           setPayments(EMPTY_PAYMENTS);
+          setReceipts(EMPTY_RECEIPTS);
           setLastError("No se pudo cargar el control de pagos. Intenta recargar.");
         }
       }
@@ -1192,7 +1221,14 @@ export function usePanoramaStore(
         return false;
       }
       const previous = current;
+      const previousReceipts = receipts ?? EMPTY_RECEIPTS;
       setPayments(result.payments);
+      // Con comprobante vigente: queda BLOQUEADO como respaldo del «Pagado»
+      // (RF-4); la RPC del servidor consume la marca y sella `confirmed_at`.
+      const sealed = markReceiptConfirmed(previousReceipts, playerRef, getTodayLocalValue(new Date()));
+      if (sealed.ok) {
+        setReceipts(sealed.receipts);
+      }
       // La transacción recién creada queda al final con id local `tx-N`;
       // tras el confirmado, la RPC devuelve el id de fila real y se pisa
       // para que «Revertir» apunte a la fila de la base.
@@ -1218,11 +1254,12 @@ export function usePanoramaStore(
         })
         .catch(() => {
           setPayments(previous);
+          setReceipts(previousReceipts);
           setLastError("No se pudo registrar el pago. Intenta otra vez.");
         });
       return true;
     },
-    [state, payments],
+    [state, payments, receipts],
   );
 
   const revokePayment = useCallback(
@@ -1352,6 +1389,78 @@ export function usePanoramaStore(
     [state, payments],
   );
 
+  /** Rechazo del organizador (RF-5): vuelve a «Pendiente», su imagen se
+   *  elimina en el servidor y queda la nota opcional de motivo. */
+  const rejectPaymentTransferAction = useCallback(
+    (playerRef: PlayerRef, note: string | null): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null) {
+        return false;
+      }
+      const current = payments ?? EMPTY_PAYMENTS;
+      const currentReceipts = receipts ?? EMPTY_RECEIPTS;
+      const result = rejectCoreActiveClaim(current, currentReceipts, { playerRef, note });
+      if (!result.ok) {
+        setLastError(getReceiptErrorMessage(result.reason));
+        return false;
+      }
+      const trimmed = note?.trim() ?? "";
+      const previous = current;
+      const previousReceipts = currentReceipts;
+      setPayments(result.payments);
+      setReceipts(result.receipts);
+      void rejectPaymentTransferRow(getSupabaseBrowserClient(), {
+        panoramaId: active.id,
+        participantId: playerRef,
+        note: trimmed === "" ? null : trimmed,
+      })
+        .then(() => setLastError(null))
+        .catch(() => {
+          setPayments(previous);
+          setReceipts(previousReceipts);
+          setLastError("No se pudo rechazar el comprobante. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, payments, receipts],
+  );
+
+  /** Edición de la nota mientras la fila siga «Pendiente» (D3). El borrado
+   *  (texto vacío) también es edición. */
+  const updateRejectionNoteAction = useCallback(
+    (playerRef: PlayerRef, note: string | null): boolean => {
+      const active = getActivePanorama(state);
+      if (active === null) {
+        return false;
+      }
+      if (!isValidCoreRejectionNote(note)) {
+        setLastError(getReceiptErrorMessage("note_too_long"));
+        return false;
+      }
+      const current = payments ?? EMPTY_PAYMENTS;
+      // En el servidor solo es editable con la fila «Pendiente» (sin marca).
+      if (current.claims.some((claim) => claim.playerRef === playerRef)) {
+        setLastError("La nota solo se puede editar con la fila en Pendiente.");
+        return false;
+      }
+      const trimmed = note?.trim() ?? "";
+      const previous = current;
+      setPayments(setCoreRejectionNote(current, playerRef, trimmed === "" ? null : trimmed));
+      void updateRejectionNoteRow(getSupabaseBrowserClient(), {
+        panoramaId: active.id,
+        participantId: playerRef,
+        note: trimmed === "" ? null : trimmed,
+      })
+        .then(() => setLastError(null))
+        .catch(() => {
+          setPayments(previous);
+          setLastError("No se pudo guardar la nota. Intenta otra vez.");
+        });
+      return true;
+    },
+    [state, payments],
+  );
+
   const goToNewForm = useCallback(() => {
     setState((current) => ({ ...current, activeId: null }));
   }, []);
@@ -1405,11 +1514,14 @@ export function usePanoramaStore(
       revokePayment,
       resolveRefund,
       reopenRefund,
+      rejectPaymentTransfer: rejectPaymentTransferAction,
+      updateRejectionNote: updateRejectionNoteAction,
     },
     place,
     checklist,
     teams,
     payments,
+    receipts,
     dismissError,
   };
 }

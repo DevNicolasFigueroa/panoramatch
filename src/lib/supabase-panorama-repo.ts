@@ -835,16 +835,20 @@ function mapRefundRowToResolved(row: PanoramaRefundRow): ResolvedRefund {
 }
 
 /**
- * Lee el estado completo de tesorería: bloque bancario (columna de
- * `panoramas`), transacciones con sus sellos convertidos a texto local,
- * marcas «Ya transferí» vigentes (columna de `participants`) y cierres
- * «Reembolsada». Devuelve `null` cuando el panorama ya no existe.
+ * Lee el estado de tesorería visible para quien pide: bloque bancario
+ * (columna de `panoramas`), transacciones y cierres «Reembolsada» bajo su
+ * RLS (el creador ve todo; cada invitado solo SUS filas desde la 005).
+ * Las marcas «Ya transferí» y las notas de rechazo NO viven aquí (esas
+ * columnas ya no son legibles por nadie): las aporta quien compone el
+ * estado — el creador vía RPC `get_panorama_receipts_state` y el invitado
+ * vía la vista `participant_payment_state`. Devuelve `null` cuando el
+ * panorama ya no existe.
  */
-export async function fetchPaymentsState(
+export async function fetchPaymentsBaseState(
   client: SupabaseClient,
   panoramaId: string,
 ): Promise<PaymentsState | null> {
-  const [transferRes, paymentsRes, refundsRes, claimsRes] = await Promise.all([
+  const [transferRes, paymentsRes, refundsRes] = await Promise.all([
     client
       .from("panoramas")
       .select("payment_info")
@@ -860,11 +864,6 @@ export async function fetchPaymentsState(
       .select("*")
       .eq("panorama_id", panoramaId)
       .order("resolved_at", { ascending: true }),
-    client
-      .from("participants")
-      .select("id,payment_transfer_claimed_at")
-      .eq("panorama_id", panoramaId)
-      .order("created_at", { ascending: true }),
   ]);
 
   if (transferRes.error !== null) {
@@ -876,31 +875,18 @@ export async function fetchPaymentsState(
   if (refundsRes.error !== null) {
     throw new Error(refundsRes.error.message);
   }
-  if (claimsRes.error !== null) {
-    throw new Error(claimsRes.error.message);
-  }
 
   const transferRow = transferRes.data as { payment_info: string | null } | null;
   if (transferRow === null) {
     return null;
   }
-  const claimRows = (claimsRes.data ?? []) as Array<{
-    id: string;
-    payment_transfer_claimed_at: string | null;
-  }>;
-  const claims: PaymentClaim[] = claimRows
-    .filter((row) => row.payment_transfer_claimed_at !== null)
-    .map((row) => ({
-      playerRef: row.id,
-      claimedAt: mapTimestampToLocalText(row.payment_transfer_claimed_at as string),
-    }));
 
   return {
     transferInfo: transferRow.payment_info,
     transactions: ((paymentsRes.data ?? []) as PaymentTransactionRow[]).map(
       mapPaymentRowToTransaction,
     ),
-    claims,
+    claims: [],
     resolvedRefunds: ((refundsRes.data ?? []) as PanoramaRefundRow[]).map(
       mapRefundRowToResolved,
     ),
@@ -1005,20 +991,10 @@ export async function deleteRefundRow(
   }
 }
 
-/** Marca propia «Ya transferí» del titular con cuenta (RPC definer). */
-export async function claimSelfTransferRow(
-  client: SupabaseClient,
-  panoramaId: string,
-): Promise<void> {
-  const { error } = await client.rpc("claim_payment_transfer", {
-    p_panorama_id: panoramaId,
-  });
-  if (error !== null) {
-    throw new Error(error.message);
-  }
-}
-
-/** Retracto de la marca propia del titular con cuenta (RPC definer). */
+/**
+ * Retracto de la marca propia del titular con cuenta (RPC definer): borra la
+ * marca Y su comprobante (la imagen vigente sale con el trigger del servidor).
+ */
 export async function retractSelfTransferRow(
   client: SupabaseClient,
   panoramaId: string,
@@ -1197,7 +1173,7 @@ export interface ReceiptsStateRow {
 export async function fetchCreatorReceiptsStateRow(
   client: SupabaseClient,
   panoramaId: string,
-): Promise<ReceiptsStateRow[]> {
+): Promise<Array<Omit<ReceiptsStateRow, "byte_size"> & { byte_size: number }>> {
   const { data, error } = await client.rpc("get_panorama_receipts_state", {
     p_panorama_id: panoramaId,
   });
@@ -1272,8 +1248,114 @@ export async function removeReceiptObjectRow(
   }
 }
 
-/* ─────────────── RPCs del flujo con comprobante (005) ─────────────── */
+/* ─────────────── Composición del estado de tesorería (005) ─────────────── */
 
+/** Estado completo de tesorería del CREADOR: pagos + comprobantes. */
+export interface CreatorTreasuryState {
+  payments: PaymentsState;
+  receipts: ReceiptsState;
+}
+
+/**
+ * Estado de tesorería del panorama para la página de Tesorería (creador):
+ * transacciones y cierres con las policies del creador + marcas, notas de
+ * rechazo y comprobantes de la RPC definer `get_panorama_receipts_state`
+ * (las columnas de `participants` ya no se leen directo desde el cliente).
+ * Devuelve `null` cuando el panorama ya no existe.
+ */
+export async function fetchCreatorTreasuryState(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<CreatorTreasuryState | null> {
+  const [base, receiptRows] = await Promise.all([
+    fetchPaymentsBaseState(client, panoramaId),
+    fetchCreatorReceiptsStateRow(client, panoramaId),
+  ]);
+  if (base === null) {
+    return null;
+  }
+  const claims: PaymentClaim[] = [];
+  const rejectionNotes: Record<string, string> = {};
+  const receipts: PaymentReceipt[] = [];
+  for (const row of receiptRows) {
+    if (row.claimed_at !== null) {
+      claims.push({ playerRef: row.participant_id, claimedAt: mapTimestampToLocalText(row.claimed_at) });
+    }
+    if (row.rejection_note !== null) {
+      rejectionNotes[row.participant_id] = row.rejection_note;
+    }
+    if (row.storage_path !== null) {
+      receipts.push({
+        playerRef: row.participant_id,
+        storagePath: row.storage_path,
+        mimeType: (row.mime_type ?? "") as PaymentReceipt["mimeType"],
+        byteSize: row.byte_size,
+        uploadedAt: row.uploaded_at === null ? "" : mapTimestampToLocalText(row.uploaded_at),
+        confirmedAt: row.confirmed_at === null ? null : mapTimestampToLocalText(row.confirmed_at),
+      });
+    }
+  }
+  return {
+    payments: {
+      ...base,
+      claims,
+      rejectionNotes: Object.keys(rejectionNotes).length > 0 ? rejectionNotes : undefined,
+    },
+    receipts: { receipts },
+  };
+}
+
+/** Estado de tesorería visible del INVITADO en el enlace (2A). */
+export interface GuestTreasuryState {
+  payments: PaymentsState;
+  receipts: ReceiptsState;
+  /** Métricas anónimas del pozo desde el servidor; null si algo falló. */
+  summary: TreasurySummaryMetrics | null;
+}
+
+/**
+ * Datos del enlace para el invitado con sesión (privacidad 2A): SU base de
+ * pagos bajo RLS propia + SU marca/nota (vista `participant_payment_state`)
+ * + SU comprobante (RLS `payment_receipts_owner_read`) + las cifras anónimas
+ * del pozo (RPC definer). El invitado jamás consulta filas de terceros.
+ */
+export async function fetchGuestTreasuryState(
+  client: SupabaseClient,
+  panoramaId: string,
+): Promise<GuestTreasuryState> {
+  const [base, ownRow, ownReceipts, summary] = await Promise.all([
+    fetchPaymentsBaseState(client, panoramaId),
+    fetchOwnPaymentStateRow(client),
+    fetchReceiptRows(client, panoramaId),
+    fetchTreasurySummaryRow(client, panoramaId).catch(() => null),
+  ]);
+  if (base === null) {
+    throw new Error("El panorama ya no existe.");
+  }
+  const claims: PaymentClaim[] = [];
+  const rejectionNotes: Record<string, string> = {};
+  const own = ownRow !== null && ownRow.panorama_id === panoramaId ? ownRow : null;
+  if (own !== null && own.payment_transfer_claimed_at !== null) {
+    claims.push({
+      playerRef: own.id,
+      claimedAt: mapTimestampToLocalText(own.payment_transfer_claimed_at),
+    });
+    if (own.payment_transfer_rejection_note !== null) {
+      rejectionNotes[own.id] = own.payment_transfer_rejection_note;
+    }
+  }
+  return {
+    payments: {
+      ...base,
+      claims,
+      rejectionNotes: Object.keys(rejectionNotes).length > 0 ? rejectionNotes : undefined,
+    },
+    receipts: ownReceipts,
+    summary,
+  };
+}
+
+/* ─────────────── RPCs del flujo con comprobante (005) ─────────────── */
 /**
  * Marca «Ya transferí» CON el comprobante (RF-3): la RPC registra marca
  * y fila de comprobante en UNA transacción y valida el MIME/peso REALES

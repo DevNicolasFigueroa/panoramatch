@@ -21,7 +21,25 @@ import { useRouter } from "next/navigation";
 import type { AttendanceStatus, SavedPanorama } from "@/core/types";
 import { classifyAttendees } from "@/core/quota-manager";
 import { withCreatorAttendee } from "@/core/creator-attendee";
-import { createEmptyPaymentsState, type PaymentsState } from "@/core/payment-treasury";
+import { buildRestPlayers, buildTitularPlayers } from "@/core/team-organizer";
+import {
+  getPaymentFlowState,
+  createEmptyPaymentsState,
+  type PaymentsState,
+} from "@/core/payment-treasury";
+import {
+  attachPostCloseReceipt,
+  createEmptyReceiptsState,
+  getReceiptErrorMessage,
+  getGuestTreasuryView,
+  retractOwnClaim,
+  submitTransferClaim,
+  updateActiveReceipt,
+  type GuestTreasuryView as GuestTreasuryViewData,
+  type ReceiptUploadPayload,
+  type ReceiptsState,
+} from "@/core/payment-receipt";
+import type { TreasurySummaryMetrics } from "@/core/payment-receipt";
 import {
   getGuestParticipationErrorMessage,
   getOwnAttendeeByUserId,
@@ -30,20 +48,26 @@ import {
   validateGuestName,
   type GuestIdentity,
 } from "@/core/guest-participation";
-import { formatPanoramaStartsAt } from "@/core/datetime-cl";
+import { formatPanoramaStartsAt, getTodayLocalValue } from "@/core/datetime-cl";
 import { getGuestQuorumTarget, getQuorumLabel, getQuorumStatus, getMissingToQuorum } from "@/core/quota-manager";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import { getGuestIdentity, clearGuestIdentity } from "@/lib/guest-identity";
 import { useAuthSession } from "@/lib/use-auth-session";
 import {
-  claimSelfTransferRow,
+  attachReceiptPostCloseRow,
+  buildReceiptStoragePath,
+  fetchGuestTreasuryState,
   fetchPanoramaById,
-  fetchPaymentsState,
+  getReceiptFileExtension,
   insertParticipantRow,
   mapParticipantRowToAttendee,
   releaseTeamSeatRow,
   claimTeamVacancyRow,
+  removeReceiptObjectRow,
   retractSelfTransferRow,
+  submitTransferClaimRow,
+  updateActiveReceiptRow,
+  uploadReceiptObjectRow,
   updateParticipantStatus,
 } from "@/lib/supabase-panorama-repo";
 import ThemeToggle from "@/components/theme-toggle";
@@ -51,7 +75,7 @@ import QuorumSemaphore from "@/components/quorum-semaphore";
 import GuestPlaceVote from "@/components/guest-place-vote";
 import GuestContributionList from "@/components/guest-contribution-list";
 import GuestTeamOrganizer from "@/components/guest-team-organizer";
-import PaymentTreasuryPanel from "@/components/payment-treasury-panel";
+import GuestPaymentTreasury from "@/components/guest-payment-treasury";
 import { MODE_EMOJI, MODE_STYLES, STATUS_OPTIONS } from "@/components/ui-theme";
 
 const SPLASH = (
@@ -82,10 +106,14 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
   const [isAdopting, setIsAdopting] = useState(false);
   // Bump para releer los equipos sorteados tras bajar/subir de «Voy».
   const [teamsRefreshKey, setTeamsRefreshKey] = useState(0);
-  // Estado de tesorería del enlace (solo lectura + la marca propia, RF-11).
+  // Estado de tesorería del enlace (privacidad 2A): SOLO lectura propia +
+  // métricas anónimas; el tablero completo es cosa del organizador.
   const [payments, setPayments] = useState<PaymentsState | null>(null);
+  const [receipts, setReceipts] = useState<ReceiptsState | null>(null);
+  const [summary, setSummary] = useState<TreasurySummaryMetrics | null>(null);
   const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
   const [isSelfPaymentBusy, setIsSelfPaymentBusy] = useState(false);
+  const [selfPaymentError, setSelfPaymentError] = useState<string | null>(null);
 
   /** Redirige al login conservando el retorno a este panorama (`/login?next=/p/<id>`). */
   const redirectToLogin = useCallback(() => {
@@ -126,29 +154,32 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     };
   }, [panoramaId]);
 
-  // Carga del tablero de pagos (solo con sesión activa; anónimos no leen datos
-  // bancarios por RLS): se repite con el bump de la marca propia.
+  // Carga del estado de pagos propio (solo con sesión activa; las métricas
+  // anónimas del pozo y SU comprobante llegan con los permisos del servidor).
+  // Se repite con el bump de la marca propia (tras unirse o adoptar).
   const loadedPanoramaId = panorama?.id ?? null;
   const currentUserId = user?.userId ?? null;
   useEffect(() => {
-    if (loadedPanoramaId === null) {
+    if (loadedPanoramaId === null || currentUserId === null) {
       setPayments(null);
-      return;
-    }
-    if (currentUserId === null) {
-      setPayments(createEmptyPaymentsState());
+      setReceipts(null);
+      setSummary(null);
       return;
     }
     let cancelled = false;
     const run = async () => {
       try {
-        const loaded = await fetchPaymentsState(getSupabaseBrowserClient(), loadedPanoramaId);
+        const loaded = await fetchGuestTreasuryState(getSupabaseBrowserClient(), loadedPanoramaId);
         if (!cancelled) {
-          setPayments(loaded === null ? createEmptyPaymentsState() : loaded);
+          setPayments(loaded.payments);
+          setReceipts(loaded.receipts);
+          setSummary(loaded.summary);
         }
       } catch {
         if (!cancelled) {
           setPayments(createEmptyPaymentsState());
+          setReceipts(createEmptyReceiptsState());
+          setSummary(null);
         }
       }
     };
@@ -164,6 +195,56 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     user === null || panorama === null
       ? null
       : getOwnAttendeeByUserId(panorama, user.userId);
+
+  // Piezas del núcleo para la vista del enlace: titulares vigentes (dan la
+  // cuota y habilitan la marca) y el resto (ex titulares, suplentes, doubt).
+  const titularPlayers = useMemo(
+    () =>
+      panorama === null
+        ? []
+        : buildTitularPlayers(
+            withCreatorAttendee(panorama.attendees, panorama.event.creatorName),
+            panorama.event.maxCapacity,
+          ),
+    [panorama],
+  );
+  const restPlayers = useMemo(
+    () =>
+      panorama === null
+        ? []
+        : buildRestPlayers(
+            withCreatorAttendee(panorama.attendees, panorama.event.creatorName),
+            panorama.event.maxCapacity,
+          ),
+    [panorama],
+  );
+
+  /**
+   * Vista de 3 capas del núcleo. Las métricas del pozo SIEMPRE vienen del
+   * servidor (RPC anónima, `summary`); la copia local solo ve filas propias
+   * y jamás se muestra si el servidor respondió.
+   */
+  const guestView = useMemo<GuestTreasuryViewData | null>(() => {
+    if (payments === null || receipts === null) {
+      return null;
+    }
+    const computed = getGuestTreasuryView(
+      payments,
+      receipts,
+      titularPlayers,
+      restPlayers,
+      panorama?.event.totalCostCLP ?? 0,
+      ownAttendee?.id ?? null,
+    );
+    return summary === null ? computed : { ...computed, summary };
+  }, [panorama, payments, receipts, summary, titularPlayers, restPlayers, ownAttendee]);
+
+  const ownReceiptStoragePath = useMemo(() => {
+    if (receipts === null || ownAttendee === null) {
+      return null;
+    }
+    return receipts.receipts.find((receipt) => receipt.playerRef === ownAttendee.id)?.storagePath ?? null;
+  }, [receipts, ownAttendee]);
 
   // Lista efectiva: el organizador es «Voy» implícito y primero.
   const allAttendees = useMemo(
@@ -364,43 +445,141 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
     [ownAttendee, panorama],
   );
 
-  /** Marca propia «Ya transferí» (RPC definer; la fila la resuelve auth.uid()). */
-  const markSelfTransferred = useCallback(async () => {
-    if (panorama === null) {
-      return;
-    }
-    setIsSelfPaymentBusy(true);
-    setError(null);
-    try {
-      await claimSelfTransferRow(getSupabaseBrowserClient(), panorama.id);
-      setPaymentsRefreshKey((key) => key + 1);
-    } catch (cause) {
-      setError(
-        getSelfPaymentError(cause, "No se pudo registrar tu marca. Intenta otra vez."),
-      );
-    } finally {
-      setIsSelfPaymentBusy(false);
-    }
-  }, [panorama]);
+  /* ─────────────── Pagos propios con comprobante (005) ─────────────── */
 
-  /** Retracto de la marca propia (RPC definer). */
+  /**
+   * Gesto único de imagen propio (RF-3/RF-4/D4): decide la operación según
+   * el flujo vigente (marca nueva / reemplazo en «En revisión» / primer
+   * adjunto a una marca legacy sin imagen / respaldo post-cierre) y sube el
+   * comprobante ANTES de registrar nada: si algo falla, la marca jamás nace
+   * sin imagen y el objeto huérfano de la subida se limpia best-effort.
+   */
+  const pickReceiptForSelf = useCallback(
+    async (file: File) => {
+      if (panorama === null || ownAttendee === null) {
+        return;
+      }
+      if (payments === null || receipts === null) {
+        setSelfPaymentError("Tus pagos siguen cargando. Intenta en un momento.");
+        return;
+      }
+      const client = getSupabaseBrowserClient();
+      const mimeType = file.type === "" ? "image/jpeg" : file.type;
+      const now = getTodayLocalValue(new Date());
+      const playerRef = ownAttendee.id;
+      const hasClaim = payments.claims.some((claim) => claim.playerRef === playerRef);
+      const flowState = getPaymentFlowState(payments, playerRef);
+      const op: "claim" | "replace" | "attach" = hasClaim
+        ? "replace"
+        : flowState === "paid"
+          ? "attach"
+          : "claim";
+      // Validación pura del núcleo ANTES de subir nada (ruta provisional).
+      const runOp = (receipt: ReceiptUploadPayload) =>
+        op === "replace"
+          ? updateActiveReceipt(payments, receipts, { playerRef, now, receipt })
+          : op === "attach"
+            ? attachPostCloseReceipt(payments, receipts, { playerRef, receipt })
+            : submitTransferClaim(payments, receipts, {
+                playerRef,
+                titularPlayers,
+                totalCostCLP: panorama.event.totalCostCLP,
+                now,
+                receipt,
+              });
+      const preview = runOp({ storagePath: "preview/provisional.jpg", mimeType, byteSize: file.size });
+      if (!preview.ok) {
+        setSelfPaymentError(getReceiptErrorMessage(preview.reason));
+        return;
+      }
+      setIsSelfPaymentBusy(true);
+      setSelfPaymentError(null);
+      try {
+        // La subida primero: el comprobante y el estado nacen juntos; si la
+        // subida falla, el estado queda «Pendiente» sin marca ni imagen.
+        const storagePath = buildReceiptStoragePath(
+          panorama.id,
+          playerRef,
+          getReceiptFileExtension(mimeType),
+        );
+        let uploaded = await uploadReceiptObjectRow(client, { storagePath, file, mimeType });
+        try {
+          const rpcPayload = {
+            panoramaId: panorama.id,
+            storagePath: uploaded.storagePath,
+            mimeType,
+            byteSize: uploaded.byteSize,
+          };
+          if (op === "claim") {
+            await submitTransferClaimRow(client, rpcPayload);
+          } else if (op === "replace") {
+            await updateActiveReceiptRow(client, rpcPayload);
+          } else {
+            await attachReceiptPostCloseRow(client, rpcPayload);
+          }
+        } catch (cause) {
+          // La RPC no registró: el objeto recién subido queda huérfano.
+          void removeReceiptObjectRow(client, uploaded.storagePath);
+          setSelfPaymentError(
+            getReceiptFlowError(cause, "No se pudo registrar el comprobante. Intenta otra vez."),
+          );
+          return;
+        }
+        // Éxito en la nube: el estado local replica con la ruta real.
+        const commit = runOp({
+          storagePath: uploaded.storagePath,
+          mimeType,
+          byteSize: uploaded.byteSize,
+        });
+        if (commit.ok) {
+          setPayments(commit.payments);
+          setReceipts(commit.receipts);
+          setSelfPaymentError(null);
+        } else {
+          // Desacuerdo rarísimo tras el éxito del servidor: refresca del origen.
+          setPaymentsRefreshKey((key) => key + 1);
+        }
+      } catch {
+        setSelfPaymentError(
+          "No se pudo subir el comprobante. Revisa tu conexión e intenta otra vez.",
+        );
+      } finally {
+        setIsSelfPaymentBusy(false);
+      }
+    },
+    [panorama, ownAttendee, payments, receipts, titularPlayers],
+  );
+
+  /** Retracto propio (RPC definer): la marca y SU comprobante salen juntos. */
   const retractSelfTransferred = useCallback(async () => {
-    if (panorama === null) {
+    if (panorama === null || ownAttendee === null || payments === null || receipts === null) {
+      return;
+    }
+    const client = getSupabaseBrowserClient();
+    const previousPayments = payments;
+    const previousReceipts = receipts;
+    const result = retractOwnClaim(payments, receipts, ownAttendee.id, titularPlayers);
+    if (!result.ok) {
+      setSelfPaymentError(getReceiptErrorMessage(result.reason));
       return;
     }
     setIsSelfPaymentBusy(true);
-    setError(null);
+    setSelfPaymentError(null);
+    setPayments(result.payments);
+    setReceipts(result.receipts);
     try {
-      await retractSelfTransferRow(getSupabaseBrowserClient(), panorama.id);
-      setPaymentsRefreshKey((key) => key + 1);
+      await retractSelfTransferRow(client, panorama.id);
+      setSelfPaymentError(null);
     } catch (cause) {
-      setError(
-        getSelfPaymentError(cause, "No se pudo retractar tu marca. Intenta otra vez."),
+      setPayments(previousPayments);
+      setReceipts(previousReceipts);
+      setSelfPaymentError(
+        getReceiptFlowError(cause, "No se pudo retractar tu marca. Intenta otra vez."),
       );
     } finally {
       setIsSelfPaymentBusy(false);
     }
-  }, [panorama]);
+  }, [panorama, ownAttendee, payments, receipts, titularPlayers]);
 
   if (isInvalid) {
     return MISSING;
@@ -605,24 +784,16 @@ export default function GuestParticipationView({ panoramaId }: { panoramaId: str
         </div>
 
         <div className="flex flex-col gap-4">
-          {/* Control de pagos: solo para usuarios con sesión (anónimos no ven datos bancarios) */}
-          {user !== null && (
-            <PaymentTreasuryPanel
-              panorama={panorama}
-              payments={payments}
-              selfActions={
-                ownAttendee === null
-                  ? undefined
-                  : {
-                      playerRef: ownAttendee.id,
-                      isTitular:
-                        classification?.titulars.some((attendee) => attendee.id === ownAttendee.id) ??
-                        false,
-                      isBusy: isSelfPaymentBusy,
-                      mark: () => void markSelfTransferred(),
-                      retract: () => void retractSelfTransferred(),
-                    }
-              }
+          {/* Pagos del enlace (2A): métricas anónimas + bloque bancario + SU tarjeta. Solo con sesión. */}
+          {user !== null && panorama.event.totalCostCLP > 0 && (
+            <GuestPaymentTreasury
+              view={guestView}
+              transferInfo={payments?.transferInfo ?? null}
+              receiptStoragePath={ownReceiptStoragePath}
+              isBusy={isSelfPaymentBusy}
+              error={selfPaymentError}
+              onPickReceipt={(file) => void pickReceiptForSelf(file)}
+              onRetract={() => void retractSelfTransferred()}
             />
           )}
 
@@ -723,12 +894,20 @@ function statusLabel(status: AttendanceStatus): string {
 }
 
 /**
- * Las RPC de marca llegan con el texto en español encabezado por el nombre
- * de la función («claim_payment_transfer: …»): se muestra solo el mensaje.
+ * Las RPC del flujo 005 llegan con el texto en español encabezado por el
+ * nombre de la función («submit_transfer_claim: …»): se muestra solo el mensaje.
  */
-function getSelfPaymentError(cause: unknown, fallback: string): string {
+const RECEIPT_RPC_PREFIXES = [
+  "submit_transfer_claim:",
+  "update_payment_receipt:",
+  "attach_post_close_receipt:",
+  "retract_payment_transfer:",
+];
+
+function getReceiptFlowError(cause: unknown, fallback: string): string {
   const raw = cause instanceof Error ? cause.message : String(cause);
-  if (raw.startsWith("claim_payment_transfer:") || raw.startsWith("retract_payment_transfer:")) {
+  const prefix = RECEIPT_RPC_PREFIXES.find((candidate) => raw.startsWith(candidate));
+  if (prefix !== undefined) {
     return raw.slice(raw.indexOf(":") + 1).trim();
   }
   return fallback;
